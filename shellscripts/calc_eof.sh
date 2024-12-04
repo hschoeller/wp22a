@@ -32,9 +32,16 @@ export OMP_NUM_THREADS=48
 
 echo "Calculating EOFs"
 
-export CDO_WEIGHT_MODE=on
-cdo -O -P 48 -eoftime,50 ../data/anosdetrend.nc ../data/evals.nc ../data/evecs.nc
-cdo -O -P 48 -eofcoeff ../data/evecs.nc ../data/anosdetrend.nc ../data/pc
-cdo -O -merge ../data/pc0* ../data/pcs.nc
-rm -f ../data/pc0*.nc
+source ~/mambaforge/bin/activate
+conda activate wp22a
+
+python ../pyscripts/prepare_eof.py
+
+#export CDO_WEIGHT_MODE=on
+#cdo -O -P 48 -eoftime,50 ../data/zg_norm.nc ../data/evals.nc ../data/evecs.nc
+#cdo -O -P 48 -eofcoeff ../data/evecs.nc ../data/zg_norm.nc ../data/pc
+#cdo -O -merge ../data/pc0* ../data/pcs.nc
+#rm -f ../data/pc0*.nc
+
+
 
