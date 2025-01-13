@@ -81,14 +81,14 @@ def normalize_data(data, variable, window):
 
 
 def compute_clim(files, chunkdict, lat_min, lat_max, lon_min, lon_max,
-                 d_path, mf=True):
+                 d_path, mf=True, member=None):
     if mf:
         ds = xr.open_mfdataset(files, parallel=True,
                                combine="by_coords",
                                chunks=chunkdict)
     else:
         ds = xr.open_dataset(files, engine="cfgrib",
-                             chunks=chunkdict).isel(number=0)
+                             chunks=chunkdict).isel(number=member)
         ds = ds.rename({'z': 'zg', 'longitude': 'lon',
                         'latitude': 'lat'})
     ds = ds.assign_coords(
@@ -97,30 +97,31 @@ def compute_clim(files, chunkdict, lat_min, lat_max, lon_min, lon_max,
 
     # Sort the dataset by longitude for proper slicing
     ds = ds.sortby('lon')
+    ds = ds.sortby('lat')
     zg = ds['zg'].sel(lat=slice(lat_min, lat_max),
                       lon=slice(lon_min, lon_max)).chunk(chunkdict)
     logging.info(zg.chunks)
-
-    zg_climatology = zg.groupby("time.dayofyear").mean(dim="time")
-    zg_climatology = zg_climatology.persist()
-    logging.info(zg_climatology.chunks)
-    logging.info("saving to disk")
-    zg_climatology.to_netcdf(d_path + "zg_climatology.nc")
-    logging.info("Climatology computation completed.")
+    if member == 0:
+        zg_climatology = zg.groupby("time.dayofyear").mean(dim="time")
+        zg_climatology = zg_climatology.persist()
+        logging.info(zg_climatology.chunks)
+        logging.info("saving to disk")
+        zg_climatology.to_netcdf(d_path + "zg_climatology.nc")
+        logging.info("Climatology computation completed.")
     return zg
 
 
-def compute_anom(zg, chunkdict, d_path):
+def compute_anom(zg, chunkdict, d_path, member=None):
     zg_climatology = xr.open_dataset(
         d_path + "zg_climatology.nc", chunks=chunkdict)
     logging.info("Calculate anomalies")
     zg_anom = zg.groupby("time.dayofyear") - zg_climatology
     logging.info("Write anomalies")
-    zg_anom.to_netcdf(d_path + "zg_anom.nc", compute=True)
+    zg_anom.to_netcdf(d_path + f"zg_anom{member}.nc", compute=True)
 
 
-def compute_detrend(d_path, chunkdict):
-    zg_anom = xr.open_dataset(d_path + "zg_anom.nc",
+def compute_detrend(d_path, chunkdict, member=None):
+    zg_anom = xr.open_dataset(d_path + f"zg_anom{member}.nc",
                               chunks=chunkdict)
     logging.info("Detrending")
 
@@ -139,13 +140,36 @@ def compute_detrend(d_path, chunkdict):
     logging.info(type(zg_detrend))
     zg_detrend = zg_detrend.astype("float32")
     logging.info("Writing detrended")
-    zg_detrend.to_netcdf(d_path + "zg_detrend.nc")
+    zg_detrend.to_netcdf(d_path + f"zg_detrend{member}.nc")
 
 
-def compute_norm(d_path, chunkdict):
+def compute_norm(d_path, chunkdict, member=None):
     zg_detrend = xr.open_dataset(
-        d_path + "zg_detrend.nc", chunks=chunkdict)
+        d_path + f"zg_detrend{member}.nc", chunks=chunkdict)
     logging.info("Normalizing")
     zg_norm = normalize_data(zg_detrend, "zg", window=30)
     logging.info("Writing normalized")
-    zg_norm.to_netcdf(d_path + "zg_norm.nc")
+    zg_norm.to_netcdf(d_path + f"zg_norm{member}.nc")
+
+
+def calculate_ensemble_spread(input_file, output_file, year, chunkdict):
+    """
+    Calculate the ensemble spread (std) for the specified year and save as .nc file.
+
+    Args:
+        input_file (str): Path to the input GRIB file.
+        output_file (str): Path to save the resulting NetCDF file.
+        year (int): Year for which to calculate the ensemble spread.
+    """
+    # Load data using xarray and cfgrib
+    ds = xr.open_dataset(input_file, engine="cfgrib", chunks=chunkdict)
+
+    # Filter data for the specified year
+    yearly_data = ds.sel(time=ds.time.dt.year == year)
+
+    # Compute ensemble spread (std across ensemble dimension)
+    spread = yearly_data.std(dim="number")
+
+    # Save the result as a NetCDF file
+    spread.to_netcdf(output_file)
+    print(f"Saved ensemble spread for {year} to {output_file}")

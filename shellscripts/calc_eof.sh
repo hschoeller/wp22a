@@ -3,13 +3,14 @@
 #SBATCH --job-name=eofs
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=48
+#SBATCH --cpus-per-task=4
 #SBATCH --partition=main
-#SBATCH --nodelist=calc04
+#SBATCH --nodelist=calc05
 #SBATCH --output=./eof.out                                                                    
 #SBATCH --error=./eof.err                                                                     
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=henry.schoeller@fu-berlin.de    
+#SBATCH --array=1-9
 
 # This script will calculate EOFs based on the gh500 anomalies in the Euro-Atlantic region
 
@@ -28,14 +29,17 @@ echo "slurm step num tasks: $SLURM_STEP_NUM_TASKS"
 echo "Running on $(hostname) with $SLURM_CPUS_PER_TASK CPUs"
 
 # Modify OMP_NUM_THREADS to reflect available CPUs
-export OMP_NUM_THREADS=48
+# export OMP_NUM_THREADS=48
 
 echo "Calculating EOFs"
 
 source ~/mambaforge/bin/activate
 conda activate wp22a
 
-python ../pyscripts/prepare_eof.py
+python ../pyscripts/prepare_eof.py $SLURM_ARRAY_TASK_ID
+
+# conda activate eof_env
+# python ../pyscripts/do_eof.py
 
 #export CDO_WEIGHT_MODE=on
 #cdo -O -P 48 -eoftime,50 ../data/zg_norm.nc ../data/evals.nc ../data/evecs.nc
