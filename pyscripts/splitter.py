@@ -97,7 +97,7 @@ if __name__ == "__main__":
     input_file_path = "/net/scratch/schoelleh96/WP2/WP2.2a/ens_data/data.nc"
     # Directory for output chunks
     output_dir = "/net/scratch/schoelleh96/WP2/WP2.2a/ens_data/chunks"
-    num_chunks = [3, 13]  # Number of desired chunks
+    num_chunks = [1, 48]  # Number of desired chunks
 
     # Call the function to split the file
     split_nc_file(input_file_path, output_dir, num_chunks)

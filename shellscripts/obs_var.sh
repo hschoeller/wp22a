@@ -5,14 +5,21 @@
 #SBATCH --error=./ObsVar.err
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=40
+#SBATCH --cpus-per-task=48
 #SBATCH --partition=main
-#SBATCH --nodelist=calc05                                                                   
+#SBATCH --nodelist=calc04                                                                
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=henry.schoeller@fu-berlin.de    
-#SBATCH --mem=375G
+#SBATCH --mem=118G
 
 # export R_LIBS=/net/scratch/schoelleh96/WP2/WP2.2a/RScripts/R_lib
+
+export OMP_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+export OPENBLAS_NUM_THREADS=1
+export BLIS_NUM_THREADS=1
+export NUMEXPR_NUM_THREADS=1
+export R_THREADS=1
 
 cd /net/scratch/schoelleh96/WP2/WP2.2a/RScripts
 

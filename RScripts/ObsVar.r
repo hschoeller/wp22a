@@ -20,7 +20,7 @@ print("All packages loaded")
 
 # Constants
 FILE <- "/net/scratch/schoelleh96/WP2/WP2.2a/ens_data/data.nc"
-CP <- c("1947-12", "1955-01", "1979-03", "1998-05")
+CP <- c("1948-05", "1958-05", "1979-02", "1998-08", "2009-07")
 OUT_DIR <- "/net/scratch/schoelleh96/WP2/WP2.2a/ens_data/mods/"
 CHUNK_DIR <- "/net/scratch/schoelleh96/WP2/WP2.2a/ens_data/chunks/"
 
@@ -79,7 +79,7 @@ process_grid_point <- function(lat, lon, z, time, cps, smooth_mod) {
         ))),
         labels = 0:(length(cps)) + 1,
         include.lowest = TRUE,
-        right = TRUE
+        right = FALSE
     )
     if (smooth_mod) {
         print("Estimate smooth model")
@@ -100,14 +100,15 @@ process_grid_point <- function(lat, lon, z, time, cps, smooth_mod) {
         print("Smooth model saved")
     } else {
         print("Estimate linear model")
-        lmod_seas <- lm(log_variance ~ segment + 
-                 segment:year + segment:sin_doy + segment:cos_doy + 
-                 segment:year:sin_doy + segment:year:cos_doy - 1,
+        lmod_seas <- lm(
+            log_variance ~ segment +
+                segment:year + segment:sin_doy + segment:cos_doy +
+                segment:year:sin_doy + segment:year:cos_doy - 1,
             data = observed_variance
         )
-        lmod_seas$residuals <- NULL # Remove residuals
-        lmod_seas$fitted.values <- NULL # Remove fitted values
-        lmod_seas$model <- NULL # Remove the model frame
+        # lmod_seas$residuals <- NULL # Remove residuals
+        # lmod_seas$fitted.values <- NULL # Remove fitted values
+        # lmod_seas$model <- NULL # Remove the model frame
         print("Saving linear model")
         saveRDS(lmod_seas, file = paste0(
             OUT_DIR, "lm", lat, "_", lon,
@@ -144,7 +145,7 @@ process_wrapper <- function(chunk_idx) # , grid_points, lat_data, lon_data, z_da
     print("Reading data")
     nc_file <- nc_open(chunk_file)
     print("Data opened; reading z")
-    z_data <- ncvar_get(nc_file, "z")
+    z_data <- ncvar_get(nc_file, "z", collapse_degen = FALSE)
     print("reading latlon")
     # Get coordinates
     lon_data <- ncvar_get(nc_file, "longitude")
@@ -169,7 +170,10 @@ process_wrapper <- function(chunk_idx) # , grid_points, lat_data, lon_data, z_da
             lon_idx <- grid_points[i, 1]
             lat_idx <- grid_points[i, 2]
             print(paste0("Processing grid point ", lat_idx, ", ", lon_idx))
-            print(paste0("Lat: ", lat_data[lat_idx], ", Lon: ", lon_data[lon_idx]))
+            print(paste0(
+                "Lat: ", lat_data[lat_idx],
+                ", Lon: ", lon_data[lon_idx]
+            ))
             file_path <- paste0(
                 OUT_DIR, if (smooth_mod) "slm" else "lm",
                 lat_data[lat_idx], "_", lon_data[lon_idx], ".Rds"
@@ -187,8 +191,16 @@ process_wrapper <- function(chunk_idx) # , grid_points, lat_data, lon_data, z_da
     }
 }
 
-num_chunks <- 39
-num_cores <- detectCores() - 1
+
+Sys.setenv(OMP_NUM_THREADS = "1")
+Sys.setenv(MKL_NUM_THREADS = "1")
+Sys.setenv(OPENBLAS_NUM_THREADS = "1")
+Sys.setenv(BLIS_NUM_THREADS = "1")
+Sys.setenv(NUMEXPR_NUM_THREADS = "1")
+Sys.setenv(R_THREADS = "1")
+
+num_chunks <- 48
+num_cores <- 48
 mclapply(1:num_chunks, process_wrapper, mc.cores = num_cores)
 
 # parallelization didnt work bc of oom errors

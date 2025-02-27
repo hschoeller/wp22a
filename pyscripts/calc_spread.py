@@ -7,8 +7,9 @@ chunkdict = 'auto'
 
 # Input and output file paths
 input_file = "data.grib"
-not_years = [2018, 2017, 2016, 2007, 1997, 1987, 1977, 1967, 1957, 1947]
-years = [year for year in range(1980, 2024) if year not in not_years]
+# not_years = [2018, 2017, 2016, 2007, 1997, 1987, 1977, 1967, 1957, 1947]
+# years = [year for year in range(1980, 2024) if year not in not_years]
+years = [year for year in range(1940, 2025)]
 year = years[int(sys.argv[1])]
 
 output_file = f"spread_{year}.nc"

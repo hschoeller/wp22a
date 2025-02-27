@@ -154,7 +154,7 @@ def compute_norm(d_path, chunkdict, member=None):
 
 def calculate_ensemble_spread(input_file, output_file, year, chunkdict):
     """
-    Calculate the ensemble spread (std) for the specified year and save as .nc file.
+    Calculate the ensemble var for the specified year and save as .nc file.
 
     Args:
         input_file (str): Path to the input GRIB file.
@@ -167,8 +167,8 @@ def calculate_ensemble_spread(input_file, output_file, year, chunkdict):
     # Filter data for the specified year
     yearly_data = ds.sel(time=ds.time.dt.year == year)
 
-    # Compute ensemble spread (std across ensemble dimension)
-    spread = yearly_data.std(dim="number")
+    # Compute ensemble spread (var across ensemble dimension)
+    spread = yearly_data.var(dim="number")
 
     # Save the result as a NetCDF file
     spread.to_netcdf(output_file)

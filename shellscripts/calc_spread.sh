@@ -7,10 +7,10 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
 #SBATCH --partition=main
-#SBATCH --nodelist=calc05                                                                   
+#SBATCH --nodelist=calc04                                                                  
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=henry.schoeller@fu-berlin.de    
-#SBATCH --array=0-39
+#SBATCH --array=82-83
 
 source ~/mambaforge/bin/activate
 conda activate wp22a
