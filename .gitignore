@@ -1,0 +1,7 @@
+data/
+geo_data/
+ens_data/
+figs/
+renv/
+!renv/activate.R
+renv.lock

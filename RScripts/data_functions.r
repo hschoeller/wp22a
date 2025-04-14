@@ -6,6 +6,64 @@ library(stringr)
 library(ncdf4)
 library(lubridate)
 
+#---------------------- Dataset loading functions ----------------------------
+
+#' Load Linear Model Objects and Extract Diagnostics
+#'
+#' This function loads linear model objects from a specified directory, extracts
+#' relevant diagnostics, and computes additional metrics such as fitted differences
+#' and segment jumps at change points.
+#'
+#' @param lm_dir Character. The directory containing the linear model `.Rds` files.
+#'   Defaults to the global variable `LM_DIR`.
+#'
+#' @return A tibble containing the following information for each linear model:
+#'   - `lat`: Latitude extracted from the file name.
+#'   - `lon`: Longitude extracted from the file name.
+#'   - `obs_var`: Observed variance of the `log_variance` in the model.
+#'   - `sigma`: Residual standard error of the model.
+#'   - `aic`: Akaike Information Criterion (AIC) of the model.
+#'   - `bic`: Bayesian Information Criterion (BIC) of the model.
+#'   - `f_statistic`: F-statistic of the model.
+#'   - `f_p_value`: P-value associated with the F-statistic.
+#'   - `fit1940`: Fitted value for the year 1940.
+#'   - `fit2024`: Fitted value for the year 2024.
+#'   - `fitted_diff`: Difference between fitted values for 1940 and 2024.
+#'   - `RSS`: Residual Sum of Squares.
+#'   - `TSS`: Total Sum of Squares.
+#'   - `r_squared`: R-squared value of the model.
+#'   - `adj_r_squared`: Adjusted R-squared value of the model.
+#'   - Coefficients and p-values for each term in the model.
+#'   - Segment jumps at specified change points (e.g., `jump_<year>_<segment>_to_<segment>`).
+#'
+#' @details
+#' The function performs the following steps:
+#'   1. Reads `.Rds` files matching the pattern `^lm.*\\.Rds` from the specified directory.
+#'   2. Extracts latitude and longitude from the file names.
+#'   3. Loads each linear model object and computes diagnostics using the `broom` package.
+#'   4. Predicts fitted values for specific years and computes their differences.
+#'   5. Computes segment jumps at specified change points.
+#'   6. Combines all extracted data into a single tibble.
+#'
+#' @note
+#' This function relies on several global variables:
+#'   - `YEAR_BOUND`: A vector specifying the years for fitted value predictions (e.g., 1940 and 2024).
+#'   - `CP`: A vector of change points (e.g., years where segment jumps are computed).
+#'   - `TIME_STEPS`: Total number of time steps in the model.
+#'   - `N_COEFFS`: Number of coefficients in the model.
+#'
+#' @importFrom stringr str_extract_all
+#' @importFrom purrr map_dfr
+#' @importFrom broom glance tidy
+#' @importFrom dplyr select mutate bind_cols
+#' @importFrom tidyr pivot_wider
+#' @importFrom tibble tibble add_column
+#'
+#' @examples
+#' # Example usage:
+#' lm_data <- load_lm_objects("/path/to/lm/files")
+#'
+#' @export
 load_lm_objects <- function(lm_dir = LM_DIR) {
     lm_files <- list.files(lm_dir, pattern = "^lm.*\\.Rds", full.names = TRUE)
     lm_files <- lm_files
@@ -97,6 +155,8 @@ load_lm_objects <- function(lm_dir = LM_DIR) {
 
     return(lm_data)
 }
+
+# Some helper functions for data loaded as above
 
 fdr_adjust_pvalues <- function(df, method = "fdr") {
     # Identify p.value columns
@@ -201,74 +261,48 @@ preprocess_pval <- function(data,
     return(heatmap_data)
 }
 
-#---------------------- Dataset loading functions ----------------------------
-
-calculate_monthly_averages <- function(file_name) {
-    #' Calculate monthly averages of variable "z" after spatial averaging.
-    #'
-    #' The function opens a netCDF file, reads variable "z", averages over
-    #' the spatial dimensions ("latitude" and "longitude"), extracts the month
-    #' from the time coordinate, and then computes the monthly mean.
-    #'
-    #' @param file_name Character. NetCDF file name.
-    #' @return A data frame with columns: month and avg_z.
-    nc <- nc_open(file_name)
-    on.exit(nc_close(nc))
-
-    z_data <- ncvar_get(nc, "z")
-
-    lat <- ncvar_get(nc, "latitude")
-    lon <- ncvar_get(nc, "longitude")
-    time_data <- ncvar_get(nc, "valid_time")
-    time_origin <- sub(
-        "seconds since ", "",
-        ncatt_get(nc, "valid_time", "units")$value
-    )
-    time <- as.Date(as.POSIXct(time_data,
-        origin = time_origin,
-        tz = "UTC"
-    ))
-    months <- as.numeric(format(time, "%m"))
-
-    z_info <- nc$var[["z"]]
-    z_dim_names <- sapply(z_info$dim, function(x) x$name)
-    time_dim_index <- which(z_dim_names %in% c("time", "valid_time"))
-    spatial_dim_indices <- setdiff(seq_along(z_dim_names), time_dim_index)
-
-    spatial_avg <- apply(z_data, time_dim_index, mean, na.rm = TRUE)
-    df <- data.frame(month = months, avg_z = spatial_avg)
-    monthly_df <- df %>%
-        group_by(month) %>%
-        summarise(avg_z = mean(avg_z, na.rm = TRUE)) %>%
-        ungroup() %>%
-        arrange(month)
-
-    return(monthly_df)
-}
-
-combine_datasets <- function(datasets, years) {
-    #' Combine a list of monthly datasets into one data frame.
-    #'
-    #' Each dataset (a data frame with month and avg_z columns) is tagged with
-    #' its corresponding year.
-    #'
-    #' @param datasets List of data frames.
-    #' @param years Integer vector corresponding to each data frame.
-    #' @return A combined data frame with columns: year, month, avg_z.
-
-    combined <- mapply(function(df, yr) {
-        df$year <- yr
-        df
-    }, datasets, years, SIMPLIFY = FALSE)
-    combined_df <- do.call(rbind, combined)
-    combined_df <- combined_df[order(
-        combined_df$year,
-        combined_df$month
-    ), ]
-    rownames(combined_df) <- NULL
-    return(combined_df)
-}
-
+#' Load Model Data for Specified Grid Points
+#'
+#' This function loads and processes model data for multiple grid points,
+#' combining predictor data and observed/fitted values into a single data frame.
+#'
+#' @param lon A numeric vector of longitudes for the grid points.
+#' @param lat A numeric vector of latitudes for the grid points.
+#' @param lm_dir A string specifying the directory containing the model files.
+#' @param conf_level A numeric value specifying the confidence level for
+#'   prediction intervals (default is 0.95).
+#'
+#' @return A data frame containing:
+#'   - Predictor data (e.g., year, segment, sin_doy, cos_doy, doy, date).
+#'   - Observed response values (`log_variance`) for each grid point.
+#'   - Fitted values, residuals, and confidence intervals for each grid point.
+#'
+#' @details
+#' The function performs the following steps:
+#'   1. Identifies valid grid points for which model files exist.
+#'   2. Extracts common predictor data from the first valid grid point.
+#'   3. Constructs a master data frame with predictor variables arranged
+#'      chronologically.
+#'   4. For each grid point, extracts observed response values, fitted values,
+#'      residuals, and confidence intervals.
+#'   5. Combines the predictor data with the observed/fitted data into a
+#'      single data frame.
+#'
+#' @examples
+#' \dontrun{
+#' lon <- c(10, 20, 30)
+#' lat <- c(50, 60, 70)
+#' lm_dir <- "/path/to/model/files"
+#' conf_level <- 0.95
+#' result <- load_model_data(lon, lat, lm_dir, conf_level)
+#' head(result)
+#' }
+#'
+#' @importFrom purrr map2_lgl map2_dfc
+#' @importFrom dplyr arrange mutate select bind_cols
+#' @importFrom lubridate yday
+#' @importFrom tibble tibble
+#' @export
 load_model_data <- function(lon, lat, lm_dir, conf_level = 0.95) {
     # Find indices for which the model file exists
     valid_indices <- which(purrr::map2_lgl(lon, lat, ~ {
@@ -341,11 +375,347 @@ load_model_data <- function(lon, lat, lm_dir, conf_level = 0.95) {
     return(final_df)
 }
 
+calculate_monthly_averages <- function(file_name) {
+    #' Calculate monthly averages of variable "z" after spatial averaging.
+    #'
+    #' The function opens a netCDF file, reads variable "z", averages over
+    #' the spatial dimensions ("latitude" and "longitude"), extracts the month
+    #' from the time coordinate, and then computes the monthly mean.
+    #'
+    #' @param file_name Character. NetCDF file name.
+    #' @return A data frame with columns: month and avg_z.
+    nc <- nc_open(file_name)
+    on.exit(nc_close(nc))
+
+    z_data <- ncvar_get(nc, "z")
+
+    lat <- ncvar_get(nc, "latitude")
+    lon <- ncvar_get(nc, "longitude")
+    time_data <- ncvar_get(nc, "valid_time")
+    time_origin <- sub(
+        "seconds since ", "",
+        ncatt_get(nc, "valid_time", "units")$value
+    )
+    time <- as.Date(as.POSIXct(time_data,
+        origin = time_origin,
+        tz = "UTC"
+    ))
+    months <- as.numeric(format(time, "%m"))
+
+    z_info <- nc$var[["z"]]
+    z_dim_names <- sapply(z_info$dim, function(x) x$name)
+    time_dim_index <- which(z_dim_names %in% c("time", "valid_time"))
+    spatial_dim_indices <- setdiff(seq_along(z_dim_names), time_dim_index)
+
+    spatial_avg <- apply(z_data, time_dim_index, mean, na.rm = TRUE)
+    df <- data.frame(month = months, avg_z = spatial_avg)
+    monthly_df <- df %>%
+        group_by(month) %>%
+        summarise(avg_z = mean(avg_z, na.rm = TRUE)) %>%
+        ungroup() %>%
+        arrange(month)
+
+    return(monthly_df)
+}
+
+wrera <- function(start, end, hours, tformat, setup, dataset, basepath) {
+    #' Load weather regime indices and life cycles from era-interim or era5
+    #' for a specific period (for details about the weather regimes
+    #' contact Christian Grams, christian.grams@gmx.de)
+    #'
+    #' @param start Character string with start date in format "YYYYMMDD_HH"
+    #' @param end Character string with end date in format "YYYYMMDD_HH"
+    #' @param hours Hour or list of hours (e.g., "00","03","06") to include
+    #' @param tformat "string" for string format dates, "dtime" for Date objects
+    #' @param setup Setup string defining the weather regime data source
+    #' @param dataset Either "erainterim" or "era5"
+    #' @param basepath Directory path to the raw data
+    #'
+    #' @return List with components:
+    #'   - IWR: weather regime index with fields tsince, time, cci and
+    #'          the different weather regime projections
+    #'   - MAXIWR: maximum weather regime index with fields tsince, time,
+    #'             wrindex, and wrname
+    #'   - LC: full life cycle with fields tsince, time, wrindex, and wrname
+    #'
+    #' @author R Translation by Henry Schoeller, Original by Dominik Bueeler
+    #' @date April 2025
+
+    # Helper function to extract indices for desired hours (inside main function)
+    extract_hour_indices <- function(dtimes, hours) {
+        if (!is.list(hours) && !is.vector(hours)) {
+            hours <- c(hours)
+        }
+
+        # Vectorized extraction of hours from datetime vector
+        dt_hours <- as.integer(format(dtimes, "%H"))
+        numeric_hours <- as.integer(hours)
+
+        # Vectorized matching of hours
+        which(dt_hours %in% numeric_hours)
+    }
+
+    ##################
+    # Initialization #
+    ##################
+
+    # Set basic filenames based on dataset and setup
+    if (dataset == "erainterim") {
+        if (setup == "z500anom_1979_2015_on_wrdef_10d_1.0_1979_2015") {
+            # 10d low-pass filter and iwr threshold of 1.0
+            basefname_iwr <- "Z0500_N81_Atl_EU2_year_6h_7_10_7_ncl_all_proj_local"
+            basefname_maxiwr <-
+                "Z0500_N81_Atl_EU2_year_6h_7_10_7_ncl_all_LCO_local"
+            basefname_lc <-
+                "Z0500_N81_Atl_EU2_year_6h_7_10_7_ncl_all_LCO_local"
+        }
+    } else if (dataset == "era5") {
+        if (setup == "z500anom_1979_2019_on_wrdef_10d_1.0_1979_2019") {
+            # 10d low-pass filter and iwr threshold of 1.0
+            basefname_iwr <- "Z0500_N161_Atl_EU2_year_6h_7_10_7_ncl_all_proj_local"
+            basefname_maxiwr <-
+                "Z0500_N161_Atl_EU2_year_6h_7_10_7_ncl_all_LCO_local"
+            basefname_lc <-
+                "Z0500_N161_Atl_EU2_year_6h_7_10_7_ncl_all_LCO_local"
+        }
+    }
+
+    # Set input files
+    infile_iwr <- base::file.path(basepath, paste0(basefname_iwr, ".txt"))
+    infile_maxiwr <- base::file.path(basepath, paste0(basefname_maxiwr, ".txt"))
+    infile_lc <- base::file.path(basepath, paste0(basefname_lc, ".txt"))
+
+    # Get order of weather regimes from data (do not change!)
+    lines <- base::readLines(infile_iwr, n = 5)
+    wrsorder <- base::strsplit(lines[5], "\\s+")[[1]]
+    wrsorder <- wrsorder[17:length(wrsorder)] # Adjust for R 1-indexing
+
+    # Replace specific regime names if needed (vectorized)
+    replace_indices <- base::match(c("ZOEA", "ZOWE", "BL"), wrsorder)
+    if (!all(base::is.na(replace_indices))) {
+        wrsorder[replace_indices[!base::is.na(replace_indices)]] <-
+            c("ScTr", "EuBL", "ScBL")[!base::is.na(replace_indices)]
+    }
+
+    # Get indices of weather regimes from data (do not change!)
+    lines <- base::readLines(infile_iwr, n = 3)
+    wrsind <- base::strsplit(lines[3], "\\s+")[[1]]
+    wrsind <- wrsind[5:length(wrsind)] # Adjust for R 1-indexing
+
+    # Replace specific regime indices (vectorized)
+    replace_indices <- base::match(c("ZOEA", "ZOWE", "BL"), wrsind)
+    if (!all(base::is.na(replace_indices))) {
+        wrsind[replace_indices[!base::is.na(replace_indices)]] <-
+            c("ScTr", "EuBL", "ScBL")[!base::is.na(replace_indices)]
+    }
+
+    # Define weather regime indices and corresponding names
+    regime_names <- c("AT", "ZO", "ScTr", "AR", "EuBL", "ScBL", "GL", "no")
+    wr_indices <- base::c(
+        which(wrsind == "AT"),
+        which(wrsind == "ZO"),
+        which(wrsind == "ScTr"),
+        which(wrsind == "AR"),
+        which(wrsind == "EuBL"),
+        which(wrsind == "ScBL"),
+        which(wrsind == "GL"),
+        0
+    )
+
+    wrmeta <- base::data.frame(
+        wrname = regime_names,
+        wrindex = wr_indices,
+        stringsAsFactors = FALSE
+    )
+
+    #############
+    # Load data #
+    #############
+
+    data_iwr <- data.table::fread(
+        infile_iwr,
+        skip = 7,
+        select = c(1, 2, 3, 5:11), # Skip column 4
+        colClasses = list(integer = 1, character = 2, integer = 3, numeric = 5:11),
+        col.names = c("tsince", "time", "cci", wrsorder)
+    )
+
+    # For data_maxiwr - selecting specific columns
+    data_maxiwr <- data.table::fread(
+        infile_maxiwr,
+        skip = 7,
+        select = c(1, 2, 4), # Skip column 3
+        colClasses = list(integer = 1, character = 2, integer = 4),
+        col.names = c("tsince", "time", "wrindex")
+    )
+
+    # For data_lc - selecting specific columns
+    data_lc <- data.table::fread(
+        infile_lc,
+        skip = 7,
+        select = c(1, 2, 5), # Skip columns 3 and 4
+        colClasses = list(integer = 1, character = 2, integer = 5),
+        col.names = c("tsince", "time", "wrindex")
+    )
+
+    ####################
+    # Postprocess data #
+    ####################
+
+    # Convert datestring to datetime objects
+    dtimes <- as.POSIXct(
+        strptime(data_iwr$time, format = "%Y%m%d_%H"),
+        tz = "UTC"
+    )
+
+    # Create output data structures
+    data <- list()
+
+    # Optimized regime name lookup using match (vectorized)
+    lookup_regime_name <- function(indices) {
+        regime_names[base::match(indices, wr_indices)]
+    }
+
+    # Create output data structures more efficiently
+    data$IWR <- data_iwr
+
+    # Using data.table for more efficient operations (avoid copies)
+    if (requireNamespace("data.table", quietly = TRUE)) {
+        # Convert to data.table for in-place operations
+        data$MAXIWR <- data.table::as.data.table(data_maxiwr)
+        data$MAXIWR[, wrname := lookup_regime_name(wrindex)]
+
+        data$LC <- data.table::as.data.table(data_lc)
+        data$LC[, wrname := lookup_regime_name(wrindex)]
+    } else {
+        # Fallback if data.table is not available
+        data$MAXIWR <- data_maxiwr
+        data$MAXIWR$wrname <- lookup_regime_name(data$MAXIWR$wrindex)
+
+        data$LC <- data_lc
+        data$LC$wrname <- lookup_regime_name(data$LC$wrindex)
+    }
+
+    # Convert time strings to POSIXct objects if required
+    if (tformat == "dtime") {
+        data$IWR$time_obj <- dtimes
+        data$MAXIWR$time_obj <- dtimes
+        data$LC$time_obj <- dtimes
+    }
+
+    # Improved date handling for exact matching
+    if (tformat == "string") {
+        ind_start <- base::which(data$IWR$time == start)[1]
+        ind_end <- base::which(data$IWR$time == end)[1]
+    } else if (tformat == "dtime") {
+        # Convert search dates to POSIXct for exact matching
+        start_dt <- base::as.POSIXct(
+            base::strptime(start, format = "%Y%m%d_%H"),
+            tz = "UTC"
+        )
+        end_dt <- base::as.POSIXct(
+            base::strptime(end, format = "%Y%m%d_%H"),
+            tz = "UTC"
+        )
+
+        # Exact matching instead of using difftime
+        ind_start <- base::which(dtimes == start_dt)[1]
+        ind_end <- base::which(dtimes == end_dt)[1]
+
+        # Fallback to closest match if exact match isn't found
+        if (base::is.na(ind_start)) {
+            ind_start <- base::which.min(base::abs(dtimes - start_dt))
+        }
+        if (base::is.na(ind_end)) {
+            ind_end <- base::which.min(base::abs(dtimes - end_dt))
+        }
+    }
+
+    # Trim data for time period
+    range <- ind_start:ind_end
+
+    # More efficient subsetting
+    if (requireNamespace("data.table", quietly = TRUE)) {
+        # For data.table objects
+        data$IWR <- data$IWR[range]
+        data$MAXIWR <- data$MAXIWR[range]
+        data$LC <- data$LC[range]
+    } else {
+        # For data.frames
+        data$IWR <- data$IWR[range, ]
+        data$MAXIWR <- data$MAXIWR[range, ]
+        data$LC <- data$LC[range, ]
+    }
+    dtimes <- dtimes[range]
+
+    # More efficient hour extraction using internal helper function
+    hour_indices <- extract_hour_indices(dtimes, hours)
+
+    # Extract data with desired hours if not all hours
+    if (dataset == "erainterim" &&
+        !identical(as.character(hours), c("00", "06", "12", "18"))) {
+        if (requireNamespace("data.table", quietly = TRUE)) {
+            data$LC <- data$LC[hour_indices]
+            data$MAXIWR <- data$MAXIWR[hour_indices]
+            data$IWR <- data$IWR[hour_indices]
+        } else {
+            data$LC <- data$LC[hour_indices, ]
+            data$MAXIWR <- data$MAXIWR[hour_indices, ]
+            data$IWR <- data$IWR[hour_indices, ]
+        }
+        dtimes <- dtimes[hour_indices]
+    } else if (dataset == "era5" &&
+        !identical(
+            as.character(hours),
+            c("00", "03", "06", "09", "12", "15", "18", "21")
+        )) {
+        if (requireNamespace("data.table", quietly = TRUE)) {
+            data$LC <- data$LC[hour_indices]
+            data$MAXIWR <- data$MAXIWR[hour_indices]
+            data$IWR <- data$IWR[hour_indices]
+        } else {
+            data$LC <- data$LC[hour_indices, ]
+            data$MAXIWR <- data$MAXIWR[hour_indices, ]
+            data$IWR <- data$IWR[hour_indices, ]
+        }
+        dtimes <- dtimes[hour_indices]
+    }
+
+    # Return result
+    return(list(dtimes = dtimes, data = data))
+}
+
+#---------------------- Dataset manipulation functions ------------------------
+
+combine_datasets <- function(datasets, years) {
+    #' Combine a list of monthly datasets into one data frame.
+    #'
+    #' Each dataset (a data frame with month and avg_z columns) is tagged with
+    #' its corresponding year.
+    #'
+    #' @param datasets List of data frames.
+    #' @param years Integer vector corresponding to each data frame.
+    #' @return A combined data frame with columns: year, month, avg_z.
+
+    combined <- mapply(function(df, yr) {
+        df$year <- yr
+        df
+    }, datasets, years, SIMPLIFY = FALSE)
+    combined_df <- do.call(rbind, combined)
+    combined_df <- combined_df[order(
+        combined_df$year,
+        combined_df$month
+    ), ]
+    rownames(combined_df) <- NULL
+    return(combined_df)
+}
+
+
 
 aggregate_monthly <- function(df) {
-    # Create a year_month column (e.g. "2020-03")
+    # Create a year_month column (e.g. "2020-03-01") and ensure it's in date format
     df <- df %>%
-        mutate(date = format(date, "%Y-%m-01"))
+        mutate(date = as.Date(format(date, "%Y-%m-01")))
 
     # Identify grid points from observed columns (e.g. "observed_40_-60")
     obs_cols <- grep("^observed_", names(df), value = TRUE)
@@ -426,4 +796,275 @@ tibble_to_long <- function(df) {
         select(date, lon, lat, value, type)
 
     return(df_long)
+}
+
+#---------------------- WR Composite Functions --------------------------------
+
+#' Calculate Composite Values from Linear Models (without permutation test)
+#'
+#' This function calculates mean and variance of residuals for each combination
+#' of geographical coordinates and weather regime indices using purrr.
+#' The function reconstructs dates from the year predictor in the linear models.
+#'
+#' @param df A data frame with columns tsince, time, wrindex, and wrname
+#' @param lm_dir Directory path where the linear model .Rds files are stored
+#' @return A data frame with columns lon, lat, wr, wrname, mean, and variance
+calculate_composite_values <- function(df, lm_dir) {
+    # Get LM files and coordinates
+    lm_files <- list.files(lm_dir, pattern = "^lm.*\\.Rds", full.names = TRUE)
+    coords <- stringr::str_extract_all(lm_files, "-?\\d+\\.?\\d*",
+        simplify = TRUE
+    )
+
+    # Create lookup table for wrindex to wrname
+    wr_lookup <- unique(df[, c("wrindex", "wrname")])
+    wr_indices <- unique(df$wrindex)
+
+    # Create a data frame of all combinations to process
+    lm_info <- tibble::tibble(
+        file = lm_files,
+        lat = as.numeric(coords[, 1]),
+        lon = as.numeric(coords[, 2])
+    )
+
+    # Process each model file and weather regime combination
+    purrr::map_dfr(1:nrow(lm_info), function(i) {
+        # Load the linear model
+        file_path <- lm_info$file[i]
+        lat <- lm_info$lat[i]
+        lon <- lm_info$lon[i]
+        current_lm <- readRDS(file_path)
+
+        # Extract model data
+        model_data <- current_lm$model
+
+        # Reconstruct dates from year
+        min_year <- min(model_data$year)
+        start_date <- as.Date(paste0(min_year, "-01-01"))
+
+        # Add date information
+        model_data <- model_data %>%
+            dplyr::arrange(year) %>%
+            dplyr::mutate(
+                global_day = dplyr::row_number(),
+                date = start_date + (global_day - 1)
+            )
+        # Order residuals according to the arranged model_data
+        residuals_ordered <- current_lm$residuals[order(model_data$year)]
+        # Process each weather regime
+        purrr::map_dfr(wr_indices, function(wr) {
+            # Get wrname for this index
+            wrname <- wr_lookup$wrname[wr_lookup$wrindex == wr][1]
+
+            # Get dates for the current weather regime
+            wr_dates <- df$date[df$wrindex == wr]
+            # Find overlapping dates between reconstructed dates and weather regime
+            date_indices <- which(model_data$date %in% wr_dates)
+            # Extract residuals for matched dates (will be empty if no matches)
+            residuals_subset <- residuals_ordered[date_indices]
+            # Calculate statistics - safely handle empty cases
+            res_mean <- ifelse(length(residuals_subset) > 0,
+                mean(residuals_subset, na.rm = TRUE),
+                NA
+            )
+            res_variance <- ifelse(length(residuals_subset) > 0,
+                var(residuals_subset, na.rm = TRUE),
+                NA
+            )
+
+            # Return a single row - always return data even for empty cases
+            tibble::tibble(
+                lon = lon,
+                lat = lat,
+                wr = wr,
+                wrname = wrname,
+                mean = res_mean,
+                variance = res_variance
+            )
+        })
+    })
+}
+
+# A few helpers for permutation tested composites
+
+get_run_blocks <- function(full_dates, category_dates) {
+    # Identify the blocks of consecutive dates
+    indicator <- full_dates %in% category_dates
+    r <- rle(indicator)
+    # Extract only run lengths for the "true" segments (i.e. when the category is present)
+    blocks <- r$lengths[r$values]
+    return(blocks)
+}
+
+# Helper function that takes a vector of block lengths and the full sorted date vector
+# Returns a surrogate date set that preserves roughly
+# the block length distribution. This simple implementation randomly partitions the gaps.
+# Deviations from the original block length distribution occurs only if the
+# final block overflows.
+permute_blocks <- function(blocks, full_dates) {
+    N <- length(full_dates)
+    total_ones <- sum(blocks) # total days in this category
+    k <- length(blocks)
+    # Total gap (days not in category)
+    total_gap <- N - total_ones
+    # Randomly partition the total gap into (k+1) parts
+    # Here we use the "stars and bars" idea.
+    if (total_gap > 0) {
+        # Draw k random numbers between 0 and total_gap and sort
+        dividers <- sort(sample(0:total_gap, k, replace = FALSE))
+        gaps <- c(dividers[1], diff(dividers), total_gap - dividers[k])
+    } else {
+        gaps <- rep(0, k + 1)
+    }
+
+    # To add some additional randomness, you can also randomly permute the order of the blocks.
+    # (This does not change the overall total days but shuffles run orders.)
+    blocks_shuffled <- sample(blocks, k, replace = FALSE)
+    # Initialize surrogate indicator vector
+    surrogate_indicator <- rep(0, N)
+
+    # Track current position in the vector
+    current_pos <- 1 + gaps[1] # Start after the first gap
+
+    # Place each block sequentially, accounting for its length and the following gap
+    for (i in seq_along(blocks_shuffled)) {
+        block_length <- blocks_shuffled[i]
+        # Place the current block
+        end_pos <- min(current_pos + block_length - 1, N)
+        surrogate_indicator[current_pos:end_pos] <- 1
+
+        # Move position to after this block and its following gap
+        current_pos <- end_pos + 1 + ifelse(i < length(gaps), gaps[i + 1], 0)
+
+        # Break if we've reached the end of the vector
+        if (current_pos > N) break
+    }
+    surrogate_dates <- full_dates[which(surrogate_indicator == 1)]
+    return(surrogate_dates)
+}
+
+# Function to process a single weather regime for a single grid point.
+# This function calculates the observed composite value and the permutation
+# p-value.
+process_wr_composite <- function(
+    wr, model_data, residuals_ordered, df,
+    wr_lookup, surrogate_dates_list) {
+    # Get weather regime name from lookup
+    wrname <- wr_lookup$wrname[wr_lookup$wrindex == wr][1]
+
+    # Observed composite: get dates for the wr and calculate the mean residual
+    wr_dates_obs <- df$date[df$wrindex == wr]
+    date_indices <- which(model_data$date %in% wr_dates_obs)
+    obs_resid_subset <- residuals_ordered[date_indices]
+    obs_composite <- mean(obs_resid_subset, na.rm = TRUE)
+
+    # Permutation composites
+    surrogate_list <- surrogate_dates_list[[as.character(wr)]]
+    permuted_composites <- sapply(surrogate_list, function(surr_dates) {
+        indices <- which(model_data$date %in% surr_dates)
+        res <- residuals_ordered[indices]
+        mean(res, na.rm = TRUE)
+    })
+
+    # Two-tailed p-value based on the absolute observed composite value.
+    # p = probability that a composite mean as least as large (in absolute
+    # values) as the observed composite mean occurs by chance.
+    p_value <- mean(abs(permuted_composites) >= abs(obs_composite),
+        na.rm = TRUE
+    )
+
+    tibble(
+        wr = wr,
+        wrname = wrname,
+        mean = obs_composite,
+        p_value = p_value
+    )
+}
+
+# Function to process one grid point (one lm file)
+process_grid_point <- function(
+    lat, lon, file_path, df, wr_lookup, wr_indices,
+    surrogate_dates_list) {
+    # Load the linear model
+    current_lm <- readRDS(file_path)
+
+    # Reconstruct dates from the model data
+    model_data <- current_lm$model
+    min_year <- min(model_data$year)
+    start_date <- as.Date(paste0(min_year, "-01-01"))
+    model_data <- model_data %>%
+        arrange(year) %>%
+        mutate(
+            global_day = row_number(),
+            date = start_date + (global_day - 1)
+        )
+    # Order residuals consistently with the dates
+    residuals_ordered <- current_lm$residuals[order(model_data$year)]
+
+    # Process each weather regime for this grid point
+    category_results <- lapply(wr_indices, function(wr) {
+        process_wr_composite(
+            wr, model_data, residuals_ordered, df,
+            wr_lookup, surrogate_dates_list
+        )
+    })
+
+    # Combine the results and add grid point coordinates
+    grid_result <- bind_rows(category_results) %>%
+        mutate(lon = lon, lat = lat)
+
+    return(grid_result)
+}
+
+# Top-level function to calculate composite values.
+calculate_composite_values <- function(df, lm_dir, n_perm = 1000, n_cores = 4) {
+    # Ensure df$date is a Date object
+    df$date <- as.Date(df$date)
+
+    # Precompute the full sorted date vector from df (assumed common for all time series)
+    full_dates <- sort(unique(df$date))
+
+    # Create lookup for weather regime indices to names
+    wr_lookup <- unique(df[, c("wrindex", "wrname")])
+    wr_indices <- sort(unique(df$wrindex))
+
+    # Precompute surrogate date series (permutations) for each weather regime once.
+    surrogate_dates_list <- list()
+    for (wr in wr_indices) {
+        actual_dates <- df$date[df$wrindex == wr]
+        blocks <- get_run_blocks(full_dates, actual_dates)
+
+        surrogate_list <- vector("list", n_perm)
+        for (p in 1:n_perm) {
+            surrogate_list[[p]] <- permute_blocks(blocks, full_dates)
+        }
+        surrogate_dates_list[[as.character(wr)]] <- surrogate_list
+    }
+
+    print("Surrogate dates precomputed.")
+
+    # Create grid point info from LM files
+    lm_files <- list.files(lm_dir, pattern = "^lm.*\\.Rds", full.names = TRUE)
+    coords <- str_extract_all(lm_files, "-?\\d+\\.?\\d*", simplify = TRUE)
+    lm_info <- tibble(
+        file = lm_files,
+        lat = as.numeric(coords[, 1]),
+        lon = as.numeric(coords[, 2])
+    )
+
+    # Process grid points in parallel using mclapply
+    grid_results <- parallel::mclapply(1:nrow(lm_info), function(i) {
+        file_path <- lm_info$file[i]
+        lat <- lm_info$lat[i]
+        lon <- lm_info$lon[i]
+        print(paste("Processing grid point:", lat, lon))
+        process_grid_point(
+            lat, lon, file_path, df, wr_lookup, wr_indices,
+            surrogate_dates_list
+        )
+    }, mc.cores = n_cores)
+
+    # Combine results from all grid points
+    results <- bind_rows(grid_results)
+    return(results)
 }

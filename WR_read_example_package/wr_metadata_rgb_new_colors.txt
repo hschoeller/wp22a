@@ -1,0 +1,9 @@
+Long name		Name	Color		RGB
+Atlantic trough		AT	indigo		(75,   0,130)
+Zonal	 		ZO	red		(255,  0,  0)
+Scandinavian trough	ScTr	darkorange	(255,140,  0)
+Atlantic ridge		AR	gold		(255,215,  0)
+European blocking	EuBL	yellowgreen	(154,205, 50)
+Scandinavian blocking	ScBL	darkgreen	(  0,100,  0)
+Greenland blocking	GL	blue		(  0,  0,255)
+No regime 		no	grey		(128,128,128) 

@@ -165,7 +165,8 @@ def calculate_ensemble_spread(input_file, output_file, year, chunkdict):
     ds = xr.open_dataset(input_file, engine="cfgrib", chunks=chunkdict)
 
     # Filter data for the specified year
-    yearly_data = ds.sel(time=ds.time.dt.year == year)
+    yearly_data = ds.sel(time=ds.time.dt.year == year).where(
+        ds["number"] != 0, drop=True)
 
     # Compute ensemble spread (var across ensemble dimension)
     spread = yearly_data.var(dim="number")
