@@ -8,6 +8,7 @@ library(rnaturalearthdata)
 library(latex2exp)
 library(colorspace)
 library(tikzDevice)
+library(cowplot)
 
 # Plot aesthetics
 THEME_PUB <- theme_minimal() +
@@ -32,7 +33,7 @@ THEME_PUB_LARGE <- theme_minimal(base_size = 16) +
         legend.text = element_text(size = 16),
         legend.key.size = unit(1, "lines"),
         legend.margin = margin(t = 0, r = 0, b = 0, l = 0),
-        legend.box.margin = margin(t = -10, r = 0, b = 0, l = 0)
+        legend.box.margin = margin(t = 0, r = 0, b = 0, l = 0)
     )
 
 get_continuous_scale <- function(clims = NULL) {
@@ -48,6 +49,33 @@ get_categorical_scale <- function(clims = NULL) {
         aesthetics = c("color", "fill"),
         palette = CONT_SEQ_SCALE
     ))
+}
+
+get_diverging_scale <- function(clims = NULL) {
+    if (is.null(clims)) {
+        return(scale_fill_scico(palette = "vik", direction = 1, midpoint = 0))
+    } else {
+        # Ensure the color scale is properly centered at 0
+        max_abs <- max(abs(clims))
+        if (any(clims < 0) && any(clims > 0)) {
+            # If clims spans negative and positive values
+            return(scale_fill_scico(
+                palette = "vik",
+                direction = 1,
+                midpoint = 0,
+                limits = clims,
+                na.value = "transparent"
+            ))
+        } else {
+            # If clims is only positive or only negative
+            return(scale_fill_scico(
+                palette = "vik",
+                direction = 1,
+                limits = clims,
+                na.value = "transparent"
+            ))
+        }
+    }
 }
 
 plot_heatmap <- function(heatmap_data,
@@ -79,10 +107,10 @@ plot_heatmap <- function(heatmap_data,
 plot_spatial <- function(data, var_name, legend_name = "",
                          sig_name = NULL, title = "", alpha = ALPHA,
                          clims = NULL, show_graticule_labels = TRUE,
-                         colorbar_ticks = 2) {
+                         colorbar_ticks = 2, use_diverging = FALSE) {
     # Create WGS84 grid from data
     grid_wgs84 <- st_bbox(c(
-        xmin = min(data$lon) - 10,
+        xmin = min(data$lon),
         ymin = min(data$lat),
         xmax = max(data$lon),
         ymax = max(data$lat)
@@ -107,8 +135,8 @@ plot_spatial <- function(data, var_name, legend_name = "",
 
     # Transform grid to target projection
     grid_proj <- grid_wgs84 %>%
-        st_transform(CRS) %>%
-        filter(!is.na(.data[[var_name]]))
+        st_transform(CRS) # %>%
+    # filter(!is.na(.data[[var_name]]))
 
     # Get the extent of the projected grid
     bbox_proj <- st_bbox(grid_proj)
@@ -162,13 +190,17 @@ plot_spatial <- function(data, var_name, legend_name = "",
         # ) +
         geom_sf(data = graticule, color = "gray60", linewidth = 0.3) +
         geom_sf(data = coastlines, fill = NA, color = "black", linewidth = 0.3) +
-        get_continuous_scale(clims = clims) +
-        THEME_PUB +
         coord_sf(
             xlim = c(bbox_proj["xmin"], bbox_proj["xmax"]),
             ylim = c(bbox_proj["ymin"], bbox_proj["ymax"]),
             expand = FALSE
         )
+
+    if (use_diverging) {
+        p <- p + get_diverging_scale(clims = clims)
+    } else {
+        p <- p + get_continuous_scale(clims = clims)
+    }
     # Option to show or hide graticule labels
     if (!show_graticule_labels) {
         p <- p +
@@ -189,15 +221,17 @@ plot_spatial <- function(data, var_name, legend_name = "",
         title = title,
         x = "",
         y = ""
-    ) +
-        theme(
-            axis.title.x = element_blank(),
-            axis.title.y = element_blank()
-        )
+    ) #+
+    # theme(
+    #     axis.title.x = element_blank(),
+    #     axis.title.y = element_blank(),
+
+    # legend.position = "bottom",
+    # )
     if (!is.null(clims)) {
         p <- p +
             guides(fill = guide_colorbar(
-                barwidth = 15,
+                barwidth = 10,
                 barheight = 1,
                 ticks.linewidth = 1,
                 # Set exactly colorbar_ticks number of breaks on the colorbar
@@ -206,12 +240,16 @@ plot_spatial <- function(data, var_name, legend_name = "",
     } else {
         # If no clims provided, use the range of the data
         value_range <- range(grid_rast_df$value, na.rm = TRUE)
+        # print(seq(value_range[1], value_range[2],
+        #         length.out = colorbar_ticks))
         p <- p +
             guides(fill = guide_colorbar(
-                barwidth = 15,
+                barwidth = 10,
                 barheight = 1,
                 ticks.linewidth = 1,
-                breaks = seq(value_range[1], value_range[2], length.out = colorbar_ticks)
+                breaks = seq(value_range[1], value_range[2],
+                    length.out = colorbar_ticks
+                )
             ))
     }
 
