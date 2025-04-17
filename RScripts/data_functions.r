@@ -1136,5 +1136,3 @@ calculate_wr_composites <- function(z_data, z_dates, lon, lat, wr_data) {
 
     return(result_df)
 }
-
-z_comp <- calculate_wr_composites(z_control, time_whole, lon, lat, wr_df)

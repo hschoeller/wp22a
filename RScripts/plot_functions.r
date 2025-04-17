@@ -109,6 +109,31 @@ plot_spatial <- function(data, var_name, legend_name = "",
                          clims = NULL, show_graticule_labels = TRUE,
                          colorbar_ticks = 2, use_diverging = FALSE) {
     # Create WGS84 grid from data
+    # grid_wgs84 <- st_bbox(c(
+    #     xmin = min(data$lon),
+    #     ymin = min(data$lat),
+    #     xmax = max(data$lon),
+    #     ymax = max(data$lat)
+    # ), crs = 4326) %>%
+    #     st_make_grid(
+    #         n = c(length(unique(data$lon)), length(unique(data$lat))),
+    #         what = "polygons"
+    #     ) %>%
+    #     st_sf() %>%
+    #     st_join(
+    #         st_as_sf(data, coords = c("lon", "lat"), crs = 4326),
+    #         join = st_contains
+    #     )
+
+    # # Apply significance filter
+    # if (!is.null(sig_name)) {
+    #     grid_wgs84 <- grid_wgs84 %>%
+    #         mutate(!!var_name := ifelse(.data[[sig_name]] < alpha,
+    #             .data[[var_name]], NA
+    #         ))
+    # }
+    # First, create a complete grid
+    # First, create a complete grid
     grid_wgs84 <- st_bbox(c(
         xmin = min(data$lon),
         ymin = min(data$lat),
@@ -120,18 +145,53 @@ plot_spatial <- function(data, var_name, legend_name = "",
             what = "polygons"
         ) %>%
         st_sf() %>%
-        st_join(
-            st_as_sf(data, coords = c("lon", "lat"), crs = 4326),
-            join = st_contains
-        )
+        mutate(id = row_number())
 
-    # Apply significance filter
+    # Convert data points to SF
+    data_sf <- st_as_sf(data, coords = c("lon", "lat"), crs = 4326)
+
+    # Join data to grid
+    grid_with_data <- st_join(grid_wgs84, data_sf)
+
+    # Aggregate values per grid cell
+    grid_values <- grid_with_data %>%
+        group_by(id) %>%
+        summarize(!!var_name := mean(.data[[var_name]], na.rm = TRUE))
+
+    # Important fix: remove sf class from grid_values before joining
+    grid_values <- grid_values %>% st_drop_geometry()
+
+    # Merge back with the complete grid
+    grid_complete <- grid_wgs84 %>%
+        left_join(grid_values, by = "id")
+
+    # Fill in NA values using nearest non-NA neighbor
+    # First, identify cells with data
+    has_data <- !is.na(grid_complete[[var_name]])
+    grid_with_data <- grid_complete[has_data, ]
+
+    # For cells without data, find nearest cell with data
+    grid_no_data <- grid_complete[!has_data, ]
+    if (nrow(grid_no_data) > 0) {
+        nearest_idx <- st_nearest_feature(grid_no_data, grid_with_data)
+        grid_no_data[[var_name]] <- grid_with_data[[var_name]][nearest_idx]
+
+        # Combine both sets
+        grid_complete <- rbind(grid_with_data, grid_no_data)
+    }
+
+    # Apply significance filter if needed
     if (!is.null(sig_name)) {
-        grid_wgs84 <- grid_wgs84 %>%
+        grid_complete <- grid_complete %>%
             mutate(!!var_name := ifelse(.data[[sig_name]] < alpha,
                 .data[[var_name]], NA
             ))
     }
+
+    # Then continue with transformation
+    grid_wgs84 <- grid_complete
+    # Then continue with transformation
+    grid_wgs84 <- grid_complete
 
     # Transform grid to target projection
     grid_proj <- grid_wgs84 %>%
@@ -145,7 +205,6 @@ plot_spatial <- function(data, var_name, legend_name = "",
     # First ensure your data has the variable with proper name
     names(grid_proj)[names(grid_proj) == var_name] <- "value"
 
-    # Convert to stars object (raster)
     resolution_factor <- 8
     grid_rast <- stars::st_rasterize(
         grid_proj["value"], # Use the column we need
@@ -188,8 +247,14 @@ plot_spatial <- function(data, var_name, legend_name = "",
         # scale_fill_continuous(
         #     name = if (legend_name == "") TeX(var_name) else TeX(legend_name)
         # ) +
-        geom_sf(data = graticule, color = "gray60", linewidth = 0.3) +
-        geom_sf(data = coastlines, fill = NA, color = "black", linewidth = 0.3) +
+        geom_sf(
+            data = graticule,
+            color = "gray60", linewidth = 0.2, alpha = .5
+        ) +
+        geom_sf(
+            data = coastlines, fill = NA,
+            color = "black", linewidth = 0.2, alpha = .5
+        ) +
         coord_sf(
             xlim = c(bbox_proj["xmin"], bbox_proj["xmax"]),
             ylim = c(bbox_proj["ymin"], bbox_proj["ymax"]),
@@ -258,9 +323,9 @@ plot_spatial <- function(data, var_name, legend_name = "",
 
 add_contour <- function(
     plot_obj, data, contour_var, alpha = ALPHA, CRS,
-    resolution_factor = 8,
+    resolution_factor = 8, contour_binwidth = 750,
     contour_color = "red", contour_alpha = 0.8,
-    contour_linewidth = 0.5) {
+    contour_linewidth = 0.5, contour_linetype = "solid") {
     # Extract coordinate limits from original plot
     plot_build <- ggplot_build(plot_obj)
     xlim <- plot_build$layout$panel_params[[1]]$x.range
@@ -268,7 +333,7 @@ add_contour <- function(
 
     # Create WGS84 grid for contour data
     grid_wgs84_contour <- st_bbox(c(
-        xmin = min(data$lon) - 10,
+        xmin = min(data$lon),
         ymin = min(data$lat),
         xmax = max(data$lon),
         ymax = max(data$lat)
@@ -311,7 +376,8 @@ add_contour <- function(
             color = contour_color,
             linewidth = contour_linewidth,
             alpha = contour_alpha,
-            binwidth = 750
+            binwidth = 750,
+            linetype = contour_linetype
         )
 }
 
