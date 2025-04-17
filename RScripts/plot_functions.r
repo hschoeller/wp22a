@@ -40,7 +40,11 @@ get_continuous_scale <- function(clims = NULL) {
     if (is.null(clims)) {
         return(scale_fill_scico(palette = CONT_SEQ_SCALE))
     } else {
-        return(scale_fill_scico(palette = CONT_SEQ_SCALE, limits = clims))
+        return(scale_fill_scico(
+            palette = CONT_SEQ_SCALE,
+            limits = clims,
+            expand = expansion(mult = 0, add = 0)
+        ))
     }
 }
 
@@ -108,31 +112,6 @@ plot_spatial <- function(data, var_name, legend_name = "",
                          sig_name = NULL, title = "", alpha = ALPHA,
                          clims = NULL, show_graticule_labels = TRUE,
                          colorbar_ticks = 2, use_diverging = FALSE) {
-    # Create WGS84 grid from data
-    # grid_wgs84 <- st_bbox(c(
-    #     xmin = min(data$lon),
-    #     ymin = min(data$lat),
-    #     xmax = max(data$lon),
-    #     ymax = max(data$lat)
-    # ), crs = 4326) %>%
-    #     st_make_grid(
-    #         n = c(length(unique(data$lon)), length(unique(data$lat))),
-    #         what = "polygons"
-    #     ) %>%
-    #     st_sf() %>%
-    #     st_join(
-    #         st_as_sf(data, coords = c("lon", "lat"), crs = 4326),
-    #         join = st_contains
-    #     )
-
-    # # Apply significance filter
-    # if (!is.null(sig_name)) {
-    #     grid_wgs84 <- grid_wgs84 %>%
-    #         mutate(!!var_name := ifelse(.data[[sig_name]] < alpha,
-    #             .data[[var_name]], NA
-    #         ))
-    # }
-    # First, create a complete grid
     # First, create a complete grid
     grid_wgs84 <- st_bbox(c(
         xmin = min(data$lon),
@@ -154,10 +133,26 @@ plot_spatial <- function(data, var_name, legend_name = "",
     grid_with_data <- st_join(grid_wgs84, data_sf)
 
     # Aggregate values per grid cell
-    grid_values <- grid_with_data %>%
-        group_by(id) %>%
-        summarize(!!var_name := mean(.data[[var_name]], na.rm = TRUE))
-
+    if (is.null(sig_name)) {
+        grid_values <- grid_with_data %>%
+            group_by(id) %>%
+            summarize(
+                !!var_name := mean(.data[[var_name]], na.rm = TRUE)
+            )
+    } else {
+        grid_values <- grid_with_data %>%
+            group_by(id) %>%
+            summarize(
+                !!var_name := mean(.data[[var_name]], na.rm = TRUE),
+                !!sig_name := if (!is.null(sig_name)) {
+                    mean(.data[[sig_name]],
+                        na.rm = TRUE
+                    )
+                } else {
+                    NULL
+                }
+            )
+    }
     # Important fix: remove sf class from grid_values before joining
     grid_values <- grid_values %>% st_drop_geometry()
 
@@ -188,13 +183,8 @@ plot_spatial <- function(data, var_name, legend_name = "",
             ))
     }
 
-    # Then continue with transformation
-    grid_wgs84 <- grid_complete
-    # Then continue with transformation
-    grid_wgs84 <- grid_complete
-
     # Transform grid to target projection
-    grid_proj <- grid_wgs84 %>%
+    grid_proj <- grid_complete %>%
         st_transform(CRS) # %>%
     # filter(!is.na(.data[[var_name]]))
 
@@ -236,24 +226,13 @@ plot_spatial <- function(data, var_name, legend_name = "",
             data = grid_rast_df, aes(x = x, y = y, fill = value),
             interpolate = TRUE
         ) +
-        # ggplot() +
-        # geom_sf(
-        #     data = grid_proj,
-        #     aes(fill = .data[[var_name]]),
-        #     color = NA,
-        #     linewidth = 0
-        # )
-        # stars::geom_stars(data = grid_rast, interpolate = TRUE) +
-        # scale_fill_continuous(
-        #     name = if (legend_name == "") TeX(var_name) else TeX(legend_name)
-        # ) +
         geom_sf(
             data = graticule,
             color = "gray60", linewidth = 0.2, alpha = .5
         ) +
         geom_sf(
             data = coastlines, fill = NA,
-            color = "black", linewidth = 0.2, alpha = .5
+            color = "grey30", linewidth = 0.15, alpha = .5
         ) +
         coord_sf(
             xlim = c(bbox_proj["xmin"], bbox_proj["xmax"]),
@@ -286,13 +265,7 @@ plot_spatial <- function(data, var_name, legend_name = "",
         title = title,
         x = "",
         y = ""
-    ) #+
-    # theme(
-    #     axis.title.x = element_blank(),
-    #     axis.title.y = element_blank(),
-
-    # legend.position = "bottom",
-    # )
+    )
     if (!is.null(clims)) {
         p <- p +
             guides(fill = guide_colorbar(
@@ -305,12 +278,10 @@ plot_spatial <- function(data, var_name, legend_name = "",
     } else {
         # If no clims provided, use the range of the data
         value_range <- range(grid_rast_df$value, na.rm = TRUE)
-        # print(seq(value_range[1], value_range[2],
-        #         length.out = colorbar_ticks))
         p <- p +
             guides(fill = guide_colorbar(
-                barwidth = 10,
-                barheight = 1,
+                barwidth = 8,
+                barheight = .8,
                 ticks.linewidth = 1,
                 breaks = seq(value_range[1], value_range[2],
                     length.out = colorbar_ticks
