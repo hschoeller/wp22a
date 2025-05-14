@@ -1,8 +1,8 @@
 # Paths
-OUT_DIR <- "../figs/"
-LM_DIR <- "../ens_data/mods/"
-GEO_DIR <- "../geo_data/"
-DATA_DIR <- "../ens_data/"
+OUT_DIR <- "/net/scratch/schoelleh96/WP2/WP2.2a/figs/"
+LM_DIR <- "/net/scratch/schoelleh96/WP2/WP2.2a/ens_data/mods/"
+GEO_DIR <- "/net/scratch/schoelleh96/WP2/WP2.2a/geo_data/"
+DATA_DIR <- "/net/scratch/schoelleh96/WP2/WP2.2a/ens_data/"
 
 # Geo data
 CRS <- "+proj=laea +lat_0=55 +lon_0=-40 +x_0=0 +y_0=0

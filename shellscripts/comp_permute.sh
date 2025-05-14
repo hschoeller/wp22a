@@ -5,11 +5,11 @@
 #SBATCH --error=./CompPermute.err
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=40
+#SBATCH --cpus-per-task=48
 #SBATCH --partition=main
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=henry.schoeller@fu-berlin.de    
-#SBATCH --mem=120G
+#SBATCH --mem=185G
 
 export OMP_NUM_THREADS=1
 export MKL_NUM_THREADS=1
@@ -18,7 +18,7 @@ export BLIS_NUM_THREADS=1
 export NUMEXPR_NUM_THREADS=1
 export R_THREADS=1
 
-cd /net/scratch/schoelleh96/WP2/WP2.2a/RScripts
+cd /net/scratch/schoelleh96/WP2/WP2.2a
 
 while true; do
     used_ram=$(free -g | awk '/^Speicher:/ {print $3}')

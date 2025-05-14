@@ -5,6 +5,8 @@ library(broom)
 library(stringr)
 library(ncdf4)
 library(lubridate)
+library(data.table)
+library(parallel)
 
 #---------------------- Dataset loading functions ----------------------------
 
@@ -1017,7 +1019,7 @@ process_grid_point <- function(
 }
 
 # Top-level function to calculate composite values.
-calculate_composite_values <- function(df, lm_dir, n_perm = 1000, n_cores = 4) {
+calculate_composite_values <- function(df, lm_dir, n_perm = 10000, n_cores = 4) {
     # Ensure df$date is a Date object
     df$date <- as.Date(df$date)
 
@@ -1044,10 +1046,12 @@ calculate_composite_values <- function(df, lm_dir, n_perm = 1000, n_cores = 4) {
     print("Surrogate dates precomputed.")
 
     # Create grid point info from LM files
-    lm_files <- list.files(lm_dir, pattern = "^lm.*\\.Rds", full.names = TRUE)
+    lm_files <- list.files(lm_dir, pattern = "^lm.*\\.Rds", full.names = FALSE)
     coords <- str_extract_all(lm_files, "-?\\d+\\.?\\d*", simplify = TRUE)
+    print(coords)
+    print(str(coords))
     lm_info <- tibble(
-        file = lm_files,
+        file = file.path(lm_dir, lm_files),
         lat = as.numeric(coords[, 1]),
         lon = as.numeric(coords[, 2])
     )
@@ -1066,73 +1070,95 @@ calculate_composite_values <- function(df, lm_dir, n_perm = 1000, n_cores = 4) {
 
     # Combine results from all grid points
     results <- bind_rows(grid_results)
+    results <- results %>% mutate(p_value_adj = p.adjust(p_value, method = "fdr"))
     return(results)
 }
 
-# calculate gh500 composites
-calculate_wr_composites <- function(z_data, z_dates, lon, lat, wr_data) {
-    # Load required libraries
-    library(data.table)
-
-    # Create a mapping between dates and their position in the z_data
+calculate_wr_composites <- function(
+    z_data, z_dates, lon, lat, wr_data,
+    calculate_variance = FALSE, n_perm = 1000,
+    n_cores = parallel::detectCores() - 1) {
+    # prepare dates & regimes
     date_lookup <- data.table(
-        date = z_dates,
-        time_idx = 1:length(z_dates)
+        date = as.Date(z_dates),
+        time_idx = seq_along(z_dates)
     )
-
-    # Merge to find matching indices, only keep matches
-    merged <- merge(wr_data, date_lookup, by = "date")
-
-    # Get unique regime indices and names
-    regimes <- unique(wr_data[, .(wrindex, wrname)])
-
-    # Create empty list to store results before combining
-    composite_list <- list()
-
-    # Calculate composite for each weather regime
-    for (i in 1:nrow(regimes)) {
-        regime_idx <- regimes$wrindex[i]
-        regime_name <- regimes$wrname[i]
-
-        # Find all time indices for this regime
-        time_indices <- merged[wrindex == regime_idx]$time_idx
-
-        if (length(time_indices) > 0) {
-            # Calculate composite (mean across time dimension)
-            regime_composite <- apply(z_data[, , time_indices, drop = FALSE], c(1, 2), mean, na.rm = TRUE)
-            # Convert matrix to data frame and add row index as a column
-            composite_df <- as.data.frame(regime_composite)
-            composite_df$lon_idx <- 1:nrow(composite_df)
-            # Use pivot_longer to reshape from wide to long format
-            composite_long <- pivot_longer(composite_df,
-                cols = -lon_idx,
-                names_to = "lat_idx",
-                values_to = "z"
-            )
-            # Clean up the lon_idx column and convert to integers
-            composite_long$lat_idx <- as.integer(gsub("V", "", composite_long$lat_idx))
-            composite_long$lon_idx <- as.integer(composite_long$lon_idx)
-
-            # Convert to data.table for consistency
-            composite_long <- as.data.table(composite_long)
-            # Add actual coordinates
-            composite_long$lon <- lon[composite_long$lon_idx]
-            composite_long$lat <- lat[composite_long$lat_idx]
-
-            # Add regime information
-            composite_long$wrname <- regime_name
-            composite_long$wrindex <- regime_idx
-
-            # Remove index columns
-            composite_long[, c("lon_idx", "lat_idx") := NULL]
-
-            # Store in list
-            composite_list[[i]] <- composite_long
-        }
+    merged <- merge(wr_data[, .(date = as.Date(date), wrindex, wrname)],
+        date_lookup,
+        by = "date"
+    )
+    regimes <- unique(merged[, .(wrindex, wrname)])
+    # precompute variance & surrogates
+    if (calculate_variance) {
+        overall_var <- apply(z_data, 1:2, var, na.rm = TRUE)
     }
 
-    # Combine all regimes into a single data frame
-    result_df <- rbindlist(composite_list)
+    # pivot helper using pivot_longer, ensure data.table
+    proc <- function(mat, name) {
+        dt <- as.data.table(mat)
+        dt[, lon_idx := seq_len(.N)]
+        dt2 <- pivot_longer(dt,
+            cols = -lon_idx,
+            names_to = "lat_idx", values_to = name
+        )
+        dt2 <- as.data.table(dt2)
+        dt2[, lat_idx := as.integer(gsub("V", "", lat_idx))]
+        dt2[, lon_idx := as.integer(lon_idx)]
+        dt2
+    }
 
-    return(result_df)
+    out <- list()
+    for (i in seq_len(nrow(regimes))) {
+        wr <- regimes$wrindex[i]
+        wname <- regimes$wrname[i]
+        idx <- merged[wrindex == wr, time_idx]
+        if (length(idx) == 0) next
+
+        # mean composite
+        mean_m <- apply(z_data[, , idx, drop = FALSE], 1:2, mean, na.rm = TRUE)
+        dt <- proc(mean_m, "z")[, `:=`(
+            lon = lon[lon_idx], lat = lat[lat_idx],
+            wrindex = wr, wrname = wname
+        )]
+        if (calculate_variance) {
+            # observed anomaly
+            obs <- apply(z_data[, , idx, drop = FALSE], 1:2,
+                var,
+                na.rm = TRUE
+            ) - overall_var
+
+            blocks <- get_run_blocks(z_dates, merged[wrindex == wr, date])
+            surrogates <- replicate(
+                n_perm,
+                permute_blocks(blocks, z_dates), FALSE
+            )
+
+            # Parallelized permutation loop
+            perm_results <- mclapply(seq_len(n_perm), function(p) {
+                tix <- which(as.Date(z_dates) %in% surrogates[[p]])
+                apply(z_data[, , tix, drop = FALSE], 1:2, var, na.rm = TRUE) - overall_var
+            }, mc.cores = n_cores)
+
+            # Combine results into array
+            perm_arr <- array(unlist(perm_results),
+                dim = c(length(lon), length(lat), n_perm)
+            )
+            pmat <- rowMeans(
+                sweep(abs(perm_arr), c(1, 2), abs(obs), FUN = "<"),
+                dims = 2
+            )
+
+            dt <- merge(dt, proc(obs, "z_var")[, .(lon_idx, lat_idx, z_var)],
+                by = c("lon_idx", "lat_idx")
+            )
+            dt <- merge(dt, proc(pmat, "pval")[, .(lon_idx, lat_idx, pval)],
+                by = c("lon_idx", "lat_idx")
+            )
+        }
+
+        dt[, c("lon_idx", "lat_idx") := NULL]
+        out[[i]] <- dt
+    }
+
+    rbindlist(out)
 }

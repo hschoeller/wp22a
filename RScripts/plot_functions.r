@@ -9,8 +9,10 @@ library(latex2exp)
 library(colorspace)
 library(tikzDevice)
 library(cowplot)
+library(sf)
+library(stars)
 
-# Plot aesthetics
+
 THEME_PUB <- theme_minimal() +
     theme(
         text = element_text(family = "Helvetica", size = 10),
@@ -415,6 +417,86 @@ plot_change_points <- function(data,
     }
     return(p)
 }
+
+#--- Plot Composites ----------------------------------------------------------
+
+grid_and_legend <- function(
+    comp_df, var = "mean", sig_name = "p_value_adj", alpha = .05,
+    clims = c(-.357, 0.357)) {
+    plots <- list()
+    i <- 1
+    for (wri in c(1, 6, 7, 2, 4, 5, 3, 0)) {
+        wrn <- comp_df$wrname[comp_df$wr == wri][1]
+        wr_df_i <- comp_df %>%
+            filter(wr == wri)
+        # Plotting the mean
+        p <- plot_spatial(wr_df_i, var,
+            legend_name = "$\\log(\\sigma^{2}_{EDA})$",
+            sig_name = sig_name,
+            alpha = alpha,
+            show_graticule_labels = FALSE,
+            use_diverging = TRUE,
+            clims = clims
+        ) + THEME_PUB_LARGE +
+            theme(
+                axis.text.x = element_blank(),
+                axis.text.y = element_blank(),
+                axis.ticks = element_blank(),
+                legend.position = "none",
+                plot.margin = margin(0, 0, 0, 0),
+                panel.spacing = unit(0, "lines")
+            ) + labs(title = wrn)
+        plots[[i]] <- add_contour(
+            p, wr_df_i,
+            contour_var = "z",
+            contour_color = "darkgreen",
+            contour_linewidth = 0.4,
+            CRS = CRS,
+            contour_linetype = "solid",
+            resolution_factor = 16,
+            contour_binwidth = 9807 # every 100 gpdm
+        )
+        i <- i + 1
+    }
+
+    # Get legend from one plot with legend
+    p_legend <- plot_spatial(wr_df_i, var,
+        legend_name = "$\\log(\\sigma^{2}_{EDA})$",
+        sig_name = sig_name,
+        alpha = alpha,
+        show_graticule_labels = FALSE,
+        use_diverging = TRUE,
+        clims = clims
+    ) + theme(legend.position = "bottom")
+    # Extract just the legend grob
+    legend_grob <- ggplotGrob(
+        p_legend
+    )$grobs[[which(sapply(
+        ggplotGrob(p_legend)$grobs,
+        function(x) x$name
+    ) == "guide-box")]]
+    legend_grob$grobs[[1]]$grobs[[2]]$children[[1]]$gp$fontsize <- 24 # Title size
+    legend_grob$grobs[[1]]$grobs[[1]]$children[[1]]$grobs[[1]]$children[[1]]$gp$fontsize <- 20 # Text size
+
+    # Manually create a new plot containing just the legend
+    legend_plot <- ggplot() +
+        annotation_custom(legend_grob) +
+        theme_void()
+    return(list(plots, legend_plot))
+}
+combine_plots <- function(plots, legend_plot, orientation = "horizontal") {
+    # Combine plots
+    if (orientation == "horizontal") {
+        combined <- plot_grid(plotlist = plots, ncol = 4)
+        final <- plot_grid(combined, legend_plot, ncol = 1, rel_heights = c(1, 0.1), greedy = TRUE)
+    } else {
+        combined <- plot_grid(plotlist = plots, ncol = 2)
+        final <- plot_grid(combined, legend_plot, ncol = 1, rel_heights = c(1, 0.1), greedy = TRUE)
+    }
+    # Print to see if it works
+    return(final)
+}
+
 
 save_plot <- function(
     plot_obj, filename, width = 6, height = 4,
