@@ -20,6 +20,7 @@ CP <- c("1948-05", "1958-05", "1979-02", "1998-08", "2009-07")
 
 # Statistical tests
 ALPHA <- 0.05
+N_PERM <- 10000
 
 # Plotting
 CONT_SEQ_SCALE <- "batlow"

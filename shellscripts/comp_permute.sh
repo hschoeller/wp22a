@@ -26,4 +26,5 @@ while true; do
     sleep 60
 done &
 
-Rscript /net/scratch/schoelleh96/WP2/WP2.2a/RScripts/composites_permuted.r
+# Rscript /net/scratch/schoelleh96/WP2/WP2.2a/RScripts/composites_permuted.r
+Rscript /net/scratch/schoelleh96/WP2/WP2.2a/RScripts/WR_Log_Var_Raw.r

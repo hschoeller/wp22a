@@ -5,11 +5,11 @@
 #SBATCH --error=./CompPermuteVar.err
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=10
+#SBATCH --cpus-per-task=40
 #SBATCH --partition=main
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=henry.schoeller@fu-berlin.de    
-#SBATCH --mem=185G
+#SBATCH --mem=375G
 
 export OMP_NUM_THREADS=1
 export MKL_NUM_THREADS=1

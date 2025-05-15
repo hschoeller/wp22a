@@ -429,16 +429,18 @@ wrera <- function(start, end, hours, tformat, setup, dataset, basepath) {
     #' @param end Character string with end date in format "YYYYMMDD_HH"
     #' @param hours Hour or list of hours (e.g., "00","03","06") to include
     #' @param tformat "string" for string format dates, "dtime" for Date objects
+    #'        (Note: time columns are now always POSIXct objects regardless of this parameter)
     #' @param setup Setup string defining the weather regime data source
     #' @param dataset Either "erainterim" or "era5"
     #' @param basepath Directory path to the raw data
     #'
     #' @return List with components:
-    #'   - IWR: weather regime index with fields tsince, time, cci and
+    #'   - IWR: weather regime index with fields tsince, time (POSIXct), cci and
     #'          the different weather regime projections
-    #'   - MAXIWR: maximum weather regime index with fields tsince, time,
-    #'             wrindex, and wrname
-    #'   - LC: full life cycle with fields tsince, time, wrindex, and wrname
+    #'   - MAXIWR: maximum weather regime index with fields tsince, time (POSIXct),
+    #'             wrindex (factor), and wrname (factor)
+    #'   - LC: full life cycle with fields tsince, time (POSIXct), wrindex (factor),
+    #'         and wrname (factor)
     #'
     #' @author R Translation by Henry Schoeller, Original by Dominik Bueeler
     #' @date April 2025
@@ -524,6 +526,10 @@ wrera <- function(start, end, hours, tformat, setup, dataset, basepath) {
         0
     )
 
+    # Define factor levels for consistency
+    wrname_levels <- regime_names
+    wrindex_levels <- wr_indices
+
     wrmeta <- base::data.frame(
         wrname = regime_names,
         wrindex = wr_indices,
@@ -580,6 +586,8 @@ wrera <- function(start, end, hours, tformat, setup, dataset, basepath) {
 
     # Create output data structures more efficiently
     data$IWR <- data_iwr
+    # Convert time column to POSIXct for IWR data
+    data$IWR$time <- dtimes
 
     # Using data.table for more efficient operations (avoid copies)
     if (requireNamespace("data.table", quietly = TRUE)) {
@@ -587,28 +595,71 @@ wrera <- function(start, end, hours, tformat, setup, dataset, basepath) {
         data$MAXIWR <- data.table::as.data.table(data_maxiwr)
         data$MAXIWR[, wrname := lookup_regime_name(wrindex)]
 
+        # Convert to factors with defined levels
+        data$MAXIWR[, wrindex := factor(wrindex, levels = wrindex_levels)]
+        data$MAXIWR[, wrname := factor(wrname, levels = wrname_levels)]
+
+        # Convert time column to POSIXct
+        data$MAXIWR[, time := dtimes]
+
         data$LC <- data.table::as.data.table(data_lc)
         data$LC[, wrname := lookup_regime_name(wrindex)]
+
+        # Convert to factors with defined levels
+        data$LC[, wrindex := factor(wrindex, levels = wrindex_levels)]
+        data$LC[, wrname := factor(wrname, levels = wrname_levels)]
+
+        # Convert time column to POSIXct
+        data$LC[, time := dtimes]
     } else {
         # Fallback if data.table is not available
         data$MAXIWR <- data_maxiwr
         data$MAXIWR$wrname <- lookup_regime_name(data$MAXIWR$wrindex)
 
+        # Convert to factors with defined levels
+        data$MAXIWR$wrindex <- factor(data$MAXIWR$wrindex, levels = wrindex_levels)
+        data$MAXIWR$wrname <- factor(data$MAXIWR$wrname, levels = wrname_levels)
+
+        # Convert time column to POSIXct
+        data$MAXIWR$time <- dtimes
+
         data$LC <- data_lc
         data$LC$wrname <- lookup_regime_name(data$LC$wrindex)
+
+        # Convert to factors with defined levels
+        data$LC$wrindex <- factor(data$LC$wrindex, levels = wrindex_levels)
+        data$LC$wrname <- factor(data$LC$wrname, levels = wrname_levels)
+
+        # Convert time column to POSIXct
+        data$LC$time <- dtimes
     }
 
-    # Convert time strings to POSIXct objects if required
-    if (tformat == "dtime") {
-        data$IWR$time_obj <- dtimes
-        data$MAXIWR$time_obj <- dtimes
-        data$LC$time_obj <- dtimes
-    }
+    # Note: time column is now always in POSIXct format (date objects)
+    # The tformat parameter is preserved for backward compatibility
 
     # Improved date handling for exact matching
     if (tformat == "string") {
-        ind_start <- base::which(data$IWR$time == start)[1]
-        ind_end <- base::which(data$IWR$time == end)[1]
+        # Convert search dates to POSIXct for comparison
+        start_dt <- base::as.POSIXct(
+            base::strptime(start, format = "%Y%m%d_%H"),
+            tz = "UTC"
+        )
+        end_dt <- base::as.POSIXct(
+            base::strptime(end, format = "%Y%m%d_%H"),
+            tz = "UTC"
+        )
+
+        # Find exact matches
+        ind_start <- base::which(dtimes == start_dt)[1]
+        ind_end <- base::which(dtimes == end_dt)[1]
+
+        # Fallback to closest match if exact match isn't found
+        if (base::is.na(ind_start)) {
+            ind_start <- base::which.min(base::abs(dtimes - start_dt))
+        }
+        if (base::is.na(ind_end)) {
+            ind_end <- base::which.min(base::abs(dtimes - end_dt))
+        }
     } else if (tformat == "dtime") {
         # Convert search dates to POSIXct for exact matching
         start_dt <- base::as.POSIXct(
@@ -944,6 +995,37 @@ permute_blocks <- function(blocks, full_dates) {
     surrogate_dates <- full_dates[which(surrogate_indicator == 1)]
     return(surrogate_dates)
 }
+
+permute_test <- function(data, category_dates, n_perm = 1000) {
+    # Extract data for the category
+    category_data <- data[data$time %in% category_dates, ]
+    observed_mean <- mean(category_data$log_variance, na.rm = TRUE)
+
+    # Get baseline mean (excluding this category)
+    baseline_data <- data[!data$time %in% category_dates, ]
+    baseline_mean <- mean(baseline_data$log_variance, na.rm = TRUE)
+
+    # Get run blocks for this category
+    full_dates <- sort(unique(data$time))
+    blocks <- get_run_blocks(full_dates, category_dates)
+
+    # Generate surrogate means
+    surrogate_means <- replicate(n_perm, {
+        surrogate_dates <- permute_blocks(blocks, full_dates)
+        surrogate_data <- data[data$time %in% surrogate_dates, ]
+        mean(surrogate_data$log_variance, na.rm = TRUE)
+    })
+    # Calculate p-value (two-tailed test)
+    # Test if observed anomaly is significantly different from surrogate anomalies
+    observed_anomaly <- observed_mean - baseline_mean
+    surrogate_anomalies <- surrogate_means - baseline_mean
+
+    p_value <- mean(abs(surrogate_anomalies) >= abs(observed_anomaly))
+
+    return(list(mean = observed_mean, p_val = p_value))
+}
+
+
 
 # Function to process a single weather regime for a single grid point.
 # This function calculates the observed composite value and the permutation
