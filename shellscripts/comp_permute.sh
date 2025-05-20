@@ -9,7 +9,8 @@
 #SBATCH --partition=main
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=henry.schoeller@fu-berlin.de    
-#SBATCH --mem=185G
+#SBATCH --mem=118G
+#SBATCH --nodelist=calc04                                                                  
 
 export OMP_NUM_THREADS=1
 export MKL_NUM_THREADS=1

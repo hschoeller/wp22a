@@ -422,7 +422,7 @@ plot_change_points <- function(data,
 
 grid_and_legend <- function(
     comp_df, var = "mean", sig_name = "p_value_adj", alpha = .05,
-    clims = c(-.357, 0.357)) {
+    clims = c(-.357, 0.357), legend_name = "$\\log(\\sigma^{2}_{EDA})$") {
     plots <- list()
     i <- 1
     for (wri in c(1, 6, 7, 2, 4, 5, 3, 0)) {
@@ -431,7 +431,7 @@ grid_and_legend <- function(
             filter(wr == wri)
         # Plotting the mean
         p <- plot_spatial(wr_df_i, var,
-            legend_name = "$\\log(\\sigma^{2}_{EDA})$",
+            legend_name = legend_name,
             sig_name = sig_name,
             alpha = alpha,
             show_graticule_labels = FALSE,
@@ -461,7 +461,7 @@ grid_and_legend <- function(
 
     # Get legend from one plot with legend
     p_legend <- plot_spatial(wr_df_i, var,
-        legend_name = "$\\log(\\sigma^{2}_{EDA})$",
+        legend_name = legend_name,
         sig_name = sig_name,
         alpha = alpha,
         show_graticule_labels = FALSE,

@@ -1001,9 +1001,8 @@ permute_test <- function(data, category_dates, n_perm = 1000) {
     category_data <- data[data$time %in% category_dates, ]
     observed_mean <- mean(category_data$log_variance, na.rm = TRUE)
 
-    # Get baseline mean (excluding this category)
-    baseline_data <- data[!data$time %in% category_dates, ]
-    baseline_mean <- mean(baseline_data$log_variance, na.rm = TRUE)
+    # Get baseline mean
+    baseline_mean <- mean(data$log_variance, na.rm = TRUE)
 
     # Get run blocks for this category
     full_dates <- sort(unique(data$time))

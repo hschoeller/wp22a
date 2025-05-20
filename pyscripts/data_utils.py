@@ -1,10 +1,68 @@
 import numpy as np
 import xarray as xr
 from scipy.signal import detrend
+import os
+import cfgrib
 import logging
 import cdsapi
 import zipfile
 import dask
+
+
+def retrieve_single(years, lat_min, lat_max, lon_min, lon_max, d_path, f_name,
+                    var):
+    c = cdsapi.Client()
+
+    dataset = "reanalysis-era5-single-levels"
+
+    request = {
+        "product_type": ["reanalysis"],
+        "variable": [var],
+        "year": years,
+        "month": [
+            "01", "02", "03",
+            "04", "05", "06",
+            "07", "08", "09",
+            "10", "11", "12"
+        ],
+        "day": [
+            "01", "02", "03",
+            "04", "05", "06",
+            "07", "08", "09",
+            "10", "11", "12",
+            "13", "14", "15",
+            "16", "17", "18",
+            "19", "20", "21",
+            "22", "23", "24",
+            "25", "26", "27",
+            "28", "29", "30",
+            "31"
+        ],
+        "time": ["12:00"],
+        "data_format": "grib",
+        "download_format": "zip",
+        "area": [lat_max, lon_min, lat_min, lon_max]
+    }
+
+    c.retrieve(dataset, request, d_path + f_name)
+
+    # Unzip the downloaded file
+    with zipfile.ZipFile(f"{d_path}/{f_name}", 'r') as zip_ref:
+        # Extract data.nc to a temporary filename
+        zip_ref.extract("data.grib", path=d_path, pwd=None)
+
+        # Rename the extracted file
+        extracted_file = os.path.join(d_path, "data.grib")
+        target_file = os.path.join(d_path, f"{var}.grib")
+
+        # If already exists, remove it first
+        if os.path.exists(target_file):
+            os.remove(target_file)
+
+        # Rename
+        os.rename(extracted_file, target_file)
+    os.remove(f"{d_path}/{f_name}")
+    return f"{var}.grib"
 
 
 def retrieve_ens(years, lat_min, lat_max,
@@ -48,6 +106,48 @@ def retrieve_ens(years, lat_min, lat_max,
     # Unzip the downloaded file
     with zipfile.ZipFile(f"{d_path}/{f_name}", 'r') as zip_ref:
         zip_ref.extractall(d_path)
+
+
+def convert_grib_to_nc(d_path, grib_name, cleanup=True):
+    """
+    Convert a GRIB file to NetCDF format.
+
+    Parameters:
+    -----------
+    grib_filepath : str
+        Path to the input GRIB file
+    nc_filepath : str
+        Path where the output NetCDF file will be saved
+
+    Returns:
+    --------
+    bool
+        True if conversion was successful, False otherwise
+    """
+    try:
+        # Open the GRIB file using cfgrib and xarray
+        ds = xr.open_dataset(os.path.join(
+            d_path, grib_name), engine='cfgrib')
+
+        # Get filename without extension
+        base_name = os.path.splitext(grib_name)[0]
+        nc_filename = f"{base_name}.nc"
+        nc_filepath = os.path.join(d_path, nc_filename)
+        # Save the data as NetCDF
+        ds.to_netcdf(nc_filepath)
+
+        # Close the dataset to ensure it's properly written
+        ds.close()
+
+        print(f"Successfully converted {grib_name} to {nc_filepath}")
+        if cleanup == True:
+            os.remove(os.path.join(
+                d_path, grib_name))
+        return True
+
+    except Exception as e:
+        print(f"Error during conversion: {str(e)}")
+        return False
 
 
 def detrend_1d(data):

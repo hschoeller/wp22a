@@ -81,7 +81,6 @@ process_grid_point <- function(lat, lon, z, time, cps, wr_df) {
 
     overall_mean <- mean(observed_variance$log_variance, na.rm = TRUE)
     results <- data.frame()
-
     # 1. Overall analysis (across whole time series)
     for (wr in unique(observed_variance$wrindex)) {
         wr_dates <- observed_variance$time[
@@ -93,7 +92,7 @@ process_grid_point <- function(lat, lon, z, time, cps, wr_df) {
         result <- permute_test(observed_variance, wr_dates, N_PERM)
 
         results <- rbind(results, data.frame(
-            segment = 0,
+            segment = -999,
             wrindex = wr,
             mean = result$mean,
             p_val = result$p_val
@@ -106,7 +105,7 @@ process_grid_point <- function(lat, lon, z, time, cps, wr_df) {
 
         results <- rbind(results, data.frame(
             segment = seg,
-            wrindex = 0,
+            wrindex = -999,
             mean = seg_mean,
             p_val = NA
         ))
@@ -129,8 +128,8 @@ process_grid_point <- function(lat, lon, z, time, cps, wr_df) {
     }
 
     results <- rbind(data.frame(
-        segment = 0,
-        wrindex = 0,
+        segment = -999,
+        wrindex = -999,
         mean = overall_mean,
         p_val = NA
     ), results)
