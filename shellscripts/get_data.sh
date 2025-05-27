@@ -15,4 +15,6 @@
 source ~/mambaforge/bin/activate
 conda activate wp22a
 
-python ../pyscripts/get_data.py
+# python ../pyscripts/get_data.py
+python ../pyscripts/splitter.py ../data/total_cloud_cover.nc \
+    ../data/tcc_chunks/ --chunks 1 48 --regrid

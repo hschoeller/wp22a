@@ -6,7 +6,8 @@ import os
 sys.path.append(os.path.abspath(os.path.join('..', 'pyscripts')))
 
 
-d_path = "/net/scratch/schoelleh96/WP2/WP2.2a/ens_data/"
+d_path_ens = "/net/scratch/schoelleh96/WP2/WP2.2a/ens_data/"
+d_path = "/net/scratch/schoelleh96/WP2/WP2.2a/data/"
 
 lon_min, lon_max = -100, 20  # Longitude range
 lat_min, lat_max = 20, 90    # Latitude range

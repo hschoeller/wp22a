@@ -25,3 +25,7 @@ N_PERM <- 10000
 # Plotting
 CONT_SEQ_SCALE <- "batlow"
 CAT_SCALE <- "batlowS"
+COLORS_REGIMES <- c(
+    "#4B0082", "red", "darkorange", "gold", "yellowgreen",
+    "darkgreen", "blue", "grey"
+)

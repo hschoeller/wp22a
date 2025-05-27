@@ -2,3 +2,14 @@ data/
 geo_data/
 ens_data/
 figs/
+renv/cache
+renv/index
+renv/library
+renv/source
+renv/staging
+*.err
+*.log
+*.out
+*.pyc
+*.nc
+*checkpoint*

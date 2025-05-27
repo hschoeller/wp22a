@@ -996,14 +996,14 @@ permute_blocks <- function(blocks, full_dates) {
     return(surrogate_dates)
 }
 
-permute_test <- function(data, category_dates, n_perm = 1000) {
+permute_test <- function(
+    data, category_dates, var_name = "log_variance",
+    n_perm = 1000) {
     # Extract data for the category
     category_data <- data[data$time %in% category_dates, ]
-    observed_mean <- mean(category_data$log_variance, na.rm = TRUE)
-
+    observed_mean <- mean(category_data[[var_name]], na.rm = TRUE)
     # Get baseline mean
-    baseline_mean <- mean(data$log_variance, na.rm = TRUE)
-
+    baseline_mean <- mean(data[[var_name]], na.rm = TRUE)
     # Get run blocks for this category
     full_dates <- sort(unique(data$time))
     blocks <- get_run_blocks(full_dates, category_dates)
@@ -1012,7 +1012,7 @@ permute_test <- function(data, category_dates, n_perm = 1000) {
     surrogate_means <- replicate(n_perm, {
         surrogate_dates <- permute_blocks(blocks, full_dates)
         surrogate_data <- data[data$time %in% surrogate_dates, ]
-        mean(surrogate_data$log_variance, na.rm = TRUE)
+        mean(surrogate_data[[var_name]], na.rm = TRUE)
     })
     # Calculate p-value (two-tailed test)
     # Test if observed anomaly is significantly different from surrogate anomalies
@@ -1020,7 +1020,6 @@ permute_test <- function(data, category_dates, n_perm = 1000) {
     surrogate_anomalies <- surrogate_means - baseline_mean
 
     p_value <- mean(abs(surrogate_anomalies) >= abs(observed_anomaly))
-
     return(list(mean = observed_mean, p_val = p_value))
 }
 
@@ -1156,7 +1155,7 @@ calculate_composite_values <- function(df, lm_dir, n_perm = 10000, n_cores = 4) 
 }
 
 calculate_wr_composites <- function(
-    z_data, z_dates, lon, lat, wr_data,
+    z_data, z_dates, lon, lat, wr_data, var_name = "z",
     calculate_variance = FALSE, n_perm = 1000,
     n_cores = parallel::detectCores() - 1) {
     # prepare dates & regimes
@@ -1197,7 +1196,7 @@ calculate_wr_composites <- function(
 
         # mean composite
         mean_m <- apply(z_data[, , idx, drop = FALSE], 1:2, mean, na.rm = TRUE)
-        dt <- proc(mean_m, "z")[, `:=`(
+        dt <- proc(mean_m, var_name)[, `:=`(
             lon = lon[lon_idx], lat = lat[lat_idx],
             wrindex = wr, wrname = wname
         )]
@@ -1229,7 +1228,7 @@ calculate_wr_composites <- function(
                 dims = 2
             )
 
-            dt <- merge(dt, proc(obs, "z_var")[, .(lon_idx, lat_idx, z_var)],
+            dt <- merge(dt, proc(obs, paste0(var_name, "_var"))[, .(lon_idx, lat_idx, z_var)],
                 by = c("lon_idx", "lat_idx")
             )
             dt <- merge(dt, proc(pmat, "pval")[, .(lon_idx, lat_idx, pval)],

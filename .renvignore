@@ -1,0 +1,5 @@
+# ignore data folders
+/data/
+/ens_data/
+/figs/
+/geo_data/

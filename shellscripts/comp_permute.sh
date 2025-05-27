@@ -9,8 +9,8 @@
 #SBATCH --partition=main
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=henry.schoeller@fu-berlin.de    
-#SBATCH --mem=118G
-#SBATCH --nodelist=calc04                                                                  
+#SBATCH --mem=182G
+#SBATCH --nodelist=calc03                                                                  
 
 export OMP_NUM_THREADS=1
 export MKL_NUM_THREADS=1
@@ -28,4 +28,5 @@ while true; do
 done &
 
 # Rscript /net/scratch/schoelleh96/WP2/WP2.2a/RScripts/composites_permuted.r
-Rscript /net/scratch/schoelleh96/WP2/WP2.2a/RScripts/WR_Log_Var_Raw.r
+# Rscript /net/scratch/schoelleh96/WP2/WP2.2a/RScripts/WR_Log_Var_Raw.r
+Rscript /net/scratch/schoelleh96/WP2/WP2.2a/RScripts/WR_TCC_Raw.r

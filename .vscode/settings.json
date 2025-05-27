@@ -1,0 +1,13 @@
+{
+    "python.analysis.autoImportCompletions": true,
+    "r.rpath.linux": "/usr/bin/R",
+    "r.rterm.linux": "/usr/bin/R"
+  // How long (ms) the debugger waits for R’s prompt before giving up (0 = wait indefinitely)
+    "r.debugger.timeouts.prompt": 0,        
+
+  // How long (ms) the debugger waits for R to fully start up before killing it
+    "r.debugger.timeouts.startup": 10000,    
+
+  // How long (ms) the debugger waits for R to terminate cleanly before force‑killing
+    "r.debugger.timeouts.terminate": 100  
+}

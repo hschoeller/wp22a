@@ -168,7 +168,7 @@ process_wrapper <- function(chunk_idx) # , grid_points, lat_data, lon_data, z_da
 
     print("Reading data")
     nc_file <- nc_open(chunk_file)
-    print("Data opened; reading z")
+    print("Data opened; reading var")
     z_data <- ncvar_get(nc_file, "z", collapse_degen = FALSE)
     print("reading latlon")
     # Get coordinates
