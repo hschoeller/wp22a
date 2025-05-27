@@ -7,6 +7,7 @@ library(ncdf4)
 library(lubridate)
 library(data.table)
 library(parallel)
+library(strucchange)
 
 #---------------------- Dataset loading functions ----------------------------
 

@@ -358,44 +358,67 @@ add_contour <- function(
 #--- Function to plot the data and change points ------------------------------
 plot_change_points <- function(data,
                                cp_df,
-                               theme_pub = NULL) {
-    p <- ggplot(data = data, aes(x = date, y = avg_z)) +
-        geom_line() +
-        scale_y_log10() +
+                               theme_pub = NULL,
+                               show_ci = TRUE) {
+    p <- ggplot(data = data, aes(x = date, y = log_variance)) +
+        geom_line(aes(size = "Assimilated"), linewidth = .25) +
         labs(
             x = "Time",
-            y = "Log(Var)",
-            title = "Original Data with Detected Change Points",
-            color = "Hierarchy"
+            y = TeX("$\\log(\\sigma^{2}_{EDA})$"),
+            title = "North Atlantic monthly mean g500 ensemble variance",
+            color = "Change Points"
         ) +
-        theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
         scale_x_date(date_breaks = "5 year", date_labels = "%Y") +
         get_categorical_scale()
 
     if (!is.null(theme_pub)) {
-        p <- p + theme_pub
+        p <- p + theme_pub +
+            theme(axis.text.x = element_text(angle = 90, hjust = 1))
     } else {
-        p <- p + THEME_PUB
+        p <- p + THEME_PUB +
+
+            theme(axis.text.x = element_text(angle = 90, hjust = 1))
     }
 
     if (nrow(cp_df) > 0) {
-        y_pos <- max(data$avg_z, na.rm = TRUE) * 0.7
+        # Compute a y position for the labels
+        cp_df$y_pos <- max(data$log_variance, na.rm = TRUE) * 0.8
+        cp_df$y_pos[cp_df$cp_date == min(cp_df$cp_date)] <- max(
+            data$log_variance,
+            na.rm = TRUE
+        ) * 0.5
+
+        # If showing uncertainty, add a shaded rectangle using cp_date_lower and cp_date_upper
+        if (show_ci &&
+            all(c("cp_date_lower", "cp_date_upper") %in% names(cp_df))) {
+            p <- p +
+                geom_rect(
+                    data = cp_df,
+                    mapping = aes(
+                        xmin = cp_date_lower, xmax = cp_date_upper,
+                        fill = factor(cp_no)
+                    ),
+                    ymin = -Inf, ymax = Inf,
+                    alpha = 0.2,
+                    inherit.aes = FALSE,
+                    show.legend = FALSE
+                )
+        }
+
+        # Add vertical dashed lines for the change points
         p <- p +
             geom_vline(
                 data = cp_df,
-                aes(
-                    xintercept = cp_date,
-                    color = factor(max_cp)
-                ),
+                mapping = aes(xintercept = cp_date, color = factor(cp_no)),
                 linetype = "dashed",
-                linewidth = 1
+                linewidth = .5
             ) +
             geom_text(
                 data = cp_df,
-                aes(
+                mapping = aes(
                     x = cp_date, y = y_pos,
                     label = format(cp_date, "%Y-%m"),
-                    color = factor(max_cp)
+                    color = factor(cp_no)
                 ),
                 angle = 90,
                 vjust = -0.5,
@@ -410,13 +433,46 @@ plot_change_points <- function(data,
                 )
             )) +
             theme(
-                legend.title = element_text(size = 18),
-                legend.text = element_text(size = 18),
-                legend.key.size = unit(2, "lines")
+                legend.title = element_text(size = 10),
+                legend.text = element_text(size = 10),
+                legend.key.size = unit(1, "lines")
             )
     }
     return(p)
 }
+
+add_fitted_line_ci <- function(model, data, line_color = "red",
+                               fill_color = "red", fill_alpha = 0.25) {
+    # Order data by date (if not already ordered)
+    data <- data[order(data$date), ]
+    # Get fitted values and confidence intervals from the model
+    preds <- as.data.frame(predict(model,
+        newdata = data,
+        interval = "confidence"
+    ))
+    # Add the date (or other x variable) to the predictions data frame
+    preds$date <- data$date
+    # Create the fitted line and confidence ribbon layers
+    list(
+        geom_line(
+            data = preds, aes(x = date, y = fit, size = "Fitted"),
+            color = line_color, linewidth = .25
+        ),
+        geom_ribbon(
+            data = preds, aes(x = date, ymin = lwr, ymax = upr),
+            fill = fill_color, alpha = fill_alpha, inherit.aes = FALSE
+        ),
+        scale_size_manual(
+            name = "",
+            values = c("Assimilated" = 0.25, "Fitted" = 0.25),
+            guide = guide_legend(override.aes = list(color = c(
+                "black",
+                line_color
+            )))
+        )
+    )
+}
+
 
 #--- Plot Composites ----------------------------------------------------------
 
