@@ -1,4 +1,6 @@
 library(changepoint)
+library(sandwich)
+library(nlme)
 
 #--- Function to detect change points ----------------------------------------
 detect_change_points <- function(data,

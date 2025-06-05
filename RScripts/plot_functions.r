@@ -443,15 +443,28 @@ plot_change_points <- function(data,
 
 add_fitted_line_ci <- function(model, data, line_color = "red",
                                fill_color = "red", fill_alpha = 0.25) {
-    # Order data by date (if not already ordered)
-    data <- data[order(data$date), ]
-    # Get fitted values and confidence intervals from the model
-    preds <- as.data.frame(predict(model,
-        newdata = data,
-        interval = "confidence"
-    ))
-    # Add the date (or other x variable) to the predictions data frame
-    preds$date <- data$date
+    if (inherits(model, "gls")) {
+        fit_vals <- predict(model, newdata = data)
+        X_new <- model.matrix(formula(model), data = data)
+        V_beta <- vcov(model)
+        SE_fit <- sqrt(rowSums((X_new %*% V_beta) * X_new))
+        df_resid <- model$dims$N - model$dims$p
+        t_crit <- qt(0.975, df = df_resid)
+        lower_CI <- fit_vals - t_crit * SE_fit
+        upper_CI <- fit_vals + t_crit * SE_fit
+        preds <- data.frame(
+            date = data$date,
+            fit  = fit_vals,
+            lwr  = lower_CI,
+            upr  = upper_CI
+        )
+    } else if (inherits(model, "lm")) {
+        preds <- as.data.frame(predict(model,
+            newdata = data,
+            interval = "confidence"
+        ))
+        preds$date <- data$date
+    }
     # Create the fitted line and confidence ribbon layers
     list(
         geom_line(
