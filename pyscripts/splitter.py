@@ -17,6 +17,7 @@ def split_nc_file(input_file_path, output_dir, num_chunks, do_regrid=True):
     Returns:
         None
     """
+    os.makedirs(output_dir, exist_ok=True)
     # Load the NetCDF file
     dataset = xr.open_dataset(input_file_path)
     print(dataset)

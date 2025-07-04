@@ -1,9 +1,12 @@
 source("RScripts/config.r")
 source("RScripts/data_functions.r")
 
+args <- commandArgs(trailingOnly = TRUE)
+CHUNK_DIR <- args[1]
+VAR_NAME <- args[2]
+
 # Constants
 OUT_DIR <- "/net/scratch/schoelleh96/WP2/WP2.2a/data/"
-CHUNK_DIR <- "/net/scratch/schoelleh96/WP2/WP2.2a/data/tcc_chunks/"
 
 # WRs
 result <- wrera(
@@ -91,10 +94,10 @@ process_wrapper <- function(chunk_idx) # , grid_points, lat_data, lon_data, z_da
     # Read in the data
     chunk_file <- paste0(CHUNK_DIR, sprintf("chunk_%02d.nc", chunk_idx))
 
-    print("Reading data")
+    print(paste0("Reading data from file ", chunk_file))
     nc_file <- nc_open(chunk_file)
-    print("Data opened; reading tcc")
-    tcc_data <- ncvar_get(nc_file, "tcc", collapse_degen = FALSE)
+    print("Data opened; reading")
+    data <- ncvar_get(nc_file, VAR_NAME, collapse_degen = FALSE)
     print("reading latlon")
     # Get coordinates
     lon_data <- ncvar_get(nc_file, "longitude")
@@ -129,7 +132,7 @@ process_wrapper <- function(chunk_idx) # , grid_points, lat_data, lon_data, z_da
             results,
             process_grid_point(
                 lat_data[lat_idx], lon_data[lon_idx],
-                tcc_data[lon_idx, lat_idx, ], time, wr_df
+                data[lon_idx, lat_idx, ], time, wr_df
             )
         )
     }
@@ -148,4 +151,4 @@ num_chunks <- 48
 num_cores <- 48
 grid_result <- mclapply(1:num_chunks, process_wrapper, mc.cores = num_cores)
 results <- bind_rows(grid_result)
-saveRDS(results, paste0(OUT_DIR, "TCC_WR_Comp.RDS"))
+saveRDS(results, paste0(OUT_DIR, VAR_NAME, "_WR_Comp.RDS"))

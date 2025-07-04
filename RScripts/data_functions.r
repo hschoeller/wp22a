@@ -11,6 +11,39 @@ library(strucchange)
 
 #---------------------- Dataset loading functions ----------------------------
 
+read_nc_variable <- function(file_path, var_name) {
+    # Open the NetCDF file
+    nc <- ncdf4::nc_open(file_path)
+    on.exit(ncdf4::nc_close(nc))
+
+    # Get longitude and latitude (optional, depending on variable grid)
+    lon <- ncdf4::ncvar_get(nc, "longitude")
+    lat <- ncdf4::ncvar_get(nc, "latitude")
+
+    # Read the raw time data and convert to Date
+    time_data <- ncdf4::ncvar_get(nc, "valid_time")
+    time_units <- ncdf4::ncatt_get(nc, "valid_time", "units")$value
+    # Extract origin string, e.g., "seconds since YYYY-MM-DD hh:mm:ss"
+    origin <- sub("seconds since ", "", time_units)
+    time_dates <- as.Date(
+        as.POSIXct(time_data,
+            origin = origin,
+            tz = "UTC"
+        )
+    )
+
+    # Read the requested variable data
+    data_values <- ncdf4::ncvar_get(nc, var_name)
+
+    # Return a list with data and time
+    list(
+        data = data_values,
+        time = time_dates,
+        lon = lon,
+        lat = lat
+    )
+}
+
 #' Load Linear Model Objects and Extract Diagnostics
 #'
 #' This function loads linear model objects from a specified directory, extracts
@@ -379,46 +412,52 @@ load_model_data <- function(lon, lat, lm_dir, conf_level = 0.95) {
 }
 
 calculate_monthly_averages <- function(file_name) {
-    #' Calculate monthly averages of variable "z" after spatial averaging.
-    #'
-    #' The function opens a netCDF file, reads variable "z", averages over
-    #' the spatial dimensions ("latitude" and "longitude"), extracts the month
-    #' from the time coordinate, and then computes the monthly mean.
+    #' Calculate monthly averages of variable "z" after area-weighted spatial averaging.
     #'
     #' @param file_name Character. NetCDF file name.
     #' @return A data frame with columns: month and avg_z.
+
     nc <- nc_open(file_name)
     on.exit(nc_close(nc))
 
     z_data <- ncvar_get(nc, "z")
-
     lat <- ncvar_get(nc, "latitude")
-    lon <- ncvar_get(nc, "longitude")
     time_data <- ncvar_get(nc, "valid_time")
-    time_origin <- sub(
-        "seconds since ", "",
-        ncatt_get(nc, "valid_time", "units")$value
-    )
-    time <- as.Date(as.POSIXct(time_data,
-        origin = time_origin,
-        tz = "UTC"
-    ))
+
+    time_origin <- sub("seconds since ", "", ncatt_get(nc, "valid_time", "units")$value)
+    time <- as.Date(as.POSIXct(time_data, origin = time_origin, tz = "UTC"))
     months <- as.numeric(format(time, "%m"))
 
+    # Get dimension info and create area weights
     z_info <- nc$var[["z"]]
     z_dim_names <- sapply(z_info$dim, function(x) x$name)
     time_dim_index <- which(z_dim_names %in% c("time", "valid_time"))
-    spatial_dim_indices <- setdiff(seq_along(z_dim_names), time_dim_index)
 
-    spatial_avg <- apply(z_data, time_dim_index, mean, na.rm = TRUE)
-    df <- data.frame(month = months, avg_z = spatial_avg)
-    monthly_df <- df %>%
+    # Create area weight array matching z_data dimensions
+    lat_weights <- cos(lat * pi / 180)
+    weight_dims <- dim(z_data)
+    weight_array <- array(1, dim = weight_dims)
+
+    # Apply latitude weights to appropriate dimension
+    lat_dim_pos <- which(z_dim_names %in% c("latitude", "lat"))
+    if (lat_dim_pos == 1) {
+        weight_array <- sweep(weight_array, 1, lat_weights, "*")
+    } else if (lat_dim_pos == 2) {
+        weight_array <- sweep(weight_array, 2, lat_weights, "*")
+    }
+
+    # Vectorized area-weighted spatial averaging
+    weighted_z <- z_data * weight_array
+    valid_mask <- !is.na(z_data)
+
+    spatial_avg <- apply(weighted_z, time_dim_index, sum, na.rm = TRUE) /
+        apply(weight_array * valid_mask, time_dim_index, sum, na.rm = TRUE)
+
+    # Calculate monthly averages
+    data.frame(month = months, avg_z = spatial_avg) %>%
         group_by(month) %>%
-        summarise(avg_z = mean(avg_z, na.rm = TRUE)) %>%
-        ungroup() %>%
+        summarise(avg_z = mean(avg_z, na.rm = TRUE), .groups = "drop") %>%
         arrange(month)
-
-    return(monthly_df)
 }
 
 wrera <- function(start, end, hours, tformat, setup, dataset, basepath) {

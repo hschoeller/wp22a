@@ -66,15 +66,15 @@ def retrieve_single(years, lat_min, lat_max, lon_min, lon_max, d_path, f_name,
 
 
 def retrieve_ens(years, lat_min, lat_max,
-                 lon_min, lon_max, d_path, f_name):
+                 lon_min, lon_max, d_path, f_name, var):
     # download data
 
     c = cdsapi.Client()
 
     dataset = "reanalysis-era5-pressure-levels"
     request = {
-        "product_type": ["ensemble_members"],
-        "variable": ["geopotential"],
+        "product_type": ["ensemble_spread"],
+        "variable": [var],
         "year": years,
         "month": [
             "01", "02", "03",
@@ -103,21 +103,40 @@ def retrieve_ens(years, lat_min, lat_max,
     }
 
     c.retrieve(dataset, request, d_path + f_name)
+    print(f"retrieving {var} for {years} to {d_path + f_name}")
     # Unzip the downloaded file
     with zipfile.ZipFile(f"{d_path}/{f_name}", 'r') as zip_ref:
-        zip_ref.extractall(d_path)
+        # Extract data.nc to a temporary filename
+        zip_ref.extract("data.grib", path=d_path, pwd=None)
+
+        # Rename the extracted file
+        extracted_file = os.path.join(d_path, "data.grib")
+        target_file = os.path.join(d_path, f"{var}.grib")
+
+        # If already exists, remove it first
+        if os.path.exists(target_file):
+            os.remove(target_file)
+
+        # Rename
+        os.rename(extracted_file, target_file)
+    os.remove(f"{d_path}/{f_name}")
+    print(f"successfully retrieved {d_path + f_name}")
+    print(f"and unzipped it to {target_file}")
+    return f"{var}.grib"
 
 
 def convert_grib_to_nc(d_path, grib_name, cleanup=True):
     """
-    Convert a GRIB file to NetCDF format.
+    Convert a GRIB file to NetCDF format, subsetting to 0.5° resolution grid points.
 
     Parameters:
     -----------
-    grib_filepath : str
-        Path to the input GRIB file
-    nc_filepath : str
-        Path where the output NetCDF file will be saved
+    d_path : str
+        Directory path of the input GRIB file
+    grib_name : str
+        Name of the input GRIB file
+    cleanup : bool
+        Whether to delete the original GRIB file after conversion
 
     Returns:
     --------
@@ -125,24 +144,43 @@ def convert_grib_to_nc(d_path, grib_name, cleanup=True):
         True if conversion was successful, False otherwise
     """
     try:
+        print(f"opening file {os.path.join(d_path, grib_name)}")
         # Open the GRIB file using cfgrib and xarray
-        ds = xr.open_dataset(os.path.join(
-            d_path, grib_name), engine='cfgrib')
 
-        # Get filename without extension
+        ds = xr.open_dataset(os.path.join(d_path, grib_name), engine='cfgrib')
+        print(ds)
+
+        lat_name = [dim for dim in ds.dims if 'lat' in dim][0]
+        lon_name = [dim for dim in ds.dims if 'lon' in dim][0]
+        print(f"Latitude name: {lat_name}, Longitude name: {lon_name}")
+
+        def is_half_degree(arr):
+            return np.isclose(np.mod(arr, 1), 0.0) | np.isclose(np.mod(arr, 1), 0.5)
+
+        # Create boolean masks for each coordinate
+        lat_mask = is_half_degree(ds[lat_name])
+        lon_mask = is_half_degree(ds[lon_name])
+
+        # Method 1: Using isel with boolean indexing
+        ds = ds.isel({
+            lat_name: lat_mask,
+            lon_name: lon_mask
+        })
+
+        # Save as NetCDF
         base_name = os.path.splitext(grib_name)[0]
         nc_filename = f"{base_name}.nc"
         nc_filepath = os.path.join(d_path, nc_filename)
-        # Save the data as NetCDF
+        print(f"Saving to NetCDF file: {nc_filepath}")
         ds.to_netcdf(nc_filepath)
 
-        # Close the dataset to ensure it's properly written
+        # Close and optionally clean up
         ds.close()
-
         print(f"Successfully converted {grib_name} to {nc_filepath}")
-        if cleanup == True:
-            os.remove(os.path.join(
-                d_path, grib_name))
+
+        if cleanup:
+            os.remove(os.path.join(d_path, grib_name))
+
         return True
 
     except Exception as e:

@@ -29,4 +29,15 @@ done &
 
 # Rscript /net/scratch/schoelleh96/WP2/WP2.2a/RScripts/composites_permuted.r
 # Rscript /net/scratch/schoelleh96/WP2/WP2.2a/RScripts/WR_Log_Var_Raw.r
-Rscript /net/scratch/schoelleh96/WP2/WP2.2a/RScripts/WR_TCC_Raw.r
+
+VARS_SHORT=("tcc" "mcc" "hcc")
+
+for i in "${!VARS_SHORT[@]}"; do
+    VAR_SHORT="${VARS_SHORT[$i]}"
+
+    Rscript /net/scratch/schoelleh96/WP2/WP2.2a/RScripts/WR_Composites_Raw.r \
+        /net/scratch/schoelleh96/WP2/WP2.2a/data/${VAR_SHORT}_chunks/ \
+        ${VAR_SHORT}
+
+    echo "Done with ${VAR_SHORT}"
+done

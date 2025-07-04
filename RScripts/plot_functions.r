@@ -12,6 +12,7 @@ library(cowplot)
 library(sf)
 library(stars)
 
+Sys.setlocale("LC_TIME", "en_US.UTF-8")
 
 THEME_PUB <- theme_minimal() +
     theme(
@@ -363,7 +364,7 @@ plot_change_points <- function(data,
     p <- ggplot(data = data, aes(x = date, y = log_variance)) +
         geom_line(aes(size = "Assimilated"), linewidth = .25) +
         labs(
-            x = "Time",
+            x = "Year",
             y = TeX("$\\log(\\sigma^{2}_{EDA})$"),
             title = "North Atlantic monthly mean g500 ensemble variance",
             color = "Change Points"
