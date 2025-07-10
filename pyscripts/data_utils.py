@@ -9,14 +9,41 @@ import zipfile
 import dask
 
 
-def retrieve_single(years, lat_min, lat_max, lon_min, lon_max, d_path, f_name,
-                    var):
+def retrieve_era5(
+    years, lat_min, lat_max, lon_min, lon_max, d_path, f_name, var,
+    dataset="reanalysis-era5-single-levels", product_type="reanalysis", pressure_level=None
+):
+    """
+    Retrieve ERA5 data from CDS API.
+
+    Parameters:
+    -----------
+    years : list or str
+        Years to retrieve.
+    lat_min, lat_max, lon_min, lon_max : float
+        Bounding box for area.
+    d_path : str
+        Directory to save file.
+    f_name : str
+        Name of the zip file to download.
+    var : str
+        Variable to retrieve.
+    dataset : str
+        CDS dataset name.
+    product_type : str
+        Product type for request.
+    pressure_level : str or None
+        Pressure level (e.g., "500") if required.
+
+    Returns:
+    --------
+    str
+        Name of the extracted GRIB file.
+    """
     c = cdsapi.Client()
 
-    dataset = "reanalysis-era5-single-levels"
-
     request = {
-        "product_type": ["reanalysis"],
+        "product_type": [product_type],
         "variable": [var],
         "year": years,
         "month": [
@@ -44,84 +71,20 @@ def retrieve_single(years, lat_min, lat_max, lon_min, lon_max, d_path, f_name,
         "area": [lat_max, lon_min, lat_min, lon_max]
     }
 
+    if pressure_level is not None:
+        request["pressure_level"] = [str(pressure_level)]
+
     c.retrieve(dataset, request, d_path + f_name)
 
     # Unzip the downloaded file
     with zipfile.ZipFile(f"{d_path}/{f_name}", 'r') as zip_ref:
-        # Extract data.nc to a temporary filename
         zip_ref.extract("data.grib", path=d_path, pwd=None)
-
-        # Rename the extracted file
         extracted_file = os.path.join(d_path, "data.grib")
         target_file = os.path.join(d_path, f"{var}.grib")
-
-        # If already exists, remove it first
         if os.path.exists(target_file):
             os.remove(target_file)
-
-        # Rename
         os.rename(extracted_file, target_file)
     os.remove(f"{d_path}/{f_name}")
-    return f"{var}.grib"
-
-
-def retrieve_ens(years, lat_min, lat_max,
-                 lon_min, lon_max, d_path, f_name, var):
-    # download data
-
-    c = cdsapi.Client()
-
-    dataset = "reanalysis-era5-pressure-levels"
-    request = {
-        "product_type": ["ensemble_spread"],
-        "variable": [var],
-        "year": years,
-        "month": [
-            "01", "02", "03",
-            "04", "05", "06",
-            "07", "08", "09",
-            "10", "11", "12"
-        ],
-        "day": [
-            "01", "02", "03",
-            "04", "05", "06",
-            "07", "08", "09",
-            "10", "11", "12",
-            "13", "14", "15",
-            "16", "17", "18",
-            "19", "20", "21",
-            "22", "23", "24",
-            "25", "26", "27",
-            "28", "29", "30",
-            "31"
-        ],
-        "time": ["12:00"],
-        "pressure_level": ["500"],
-        "data_format": "grib",
-        "download_format": "zip",
-        "area": [lat_max, lon_min, lat_min, lon_max]
-    }
-
-    c.retrieve(dataset, request, d_path + f_name)
-    print(f"retrieving {var} for {years} to {d_path + f_name}")
-    # Unzip the downloaded file
-    with zipfile.ZipFile(f"{d_path}/{f_name}", 'r') as zip_ref:
-        # Extract data.nc to a temporary filename
-        zip_ref.extract("data.grib", path=d_path, pwd=None)
-
-        # Rename the extracted file
-        extracted_file = os.path.join(d_path, "data.grib")
-        target_file = os.path.join(d_path, f"{var}.grib")
-
-        # If already exists, remove it first
-        if os.path.exists(target_file):
-            os.remove(target_file)
-
-        # Rename
-        os.rename(extracted_file, target_file)
-    os.remove(f"{d_path}/{f_name}")
-    print(f"successfully retrieved {d_path + f_name}")
-    print(f"and unzipped it to {target_file}")
     return f"{var}.grib"
 
 

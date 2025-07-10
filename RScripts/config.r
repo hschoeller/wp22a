@@ -5,12 +5,12 @@ GEO_DIR <- "/net/scratch/schoelleh96/WP2/WP2.2a/geo_data/"
 DATA_DIR <- "/net/scratch/schoelleh96/WP2/WP2.2a/ens_data/"
 
 # Geo data
-CRS <- "+proj=laea +lat_0=55 +lon_0=-40 +x_0=0 +y_0=0
+CRS <- "+proj=laea +lat_0=60 +lon_0=-20 +x_0=0 +y_0=0
     +datum=WGS84 +units=m +no_defs"
-LON_BOUND <- c(-100, 20)
-LAT_BOUND <- c(20, 90)
-GRAT_LAT <- seq(20, 90, 20)
-GRAT_LON <- seq(-120, 60, 30)
+LON_BOUND <- c(-80, 40)
+LAT_BOUND <- c(30, 90)
+GRAT_LAT <- seq(30, 90, 30)
+GRAT_LON <- seq(-90, 45, 45)
 
 # Data
 TIME_STEPS <- 31013

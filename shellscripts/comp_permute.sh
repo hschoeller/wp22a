@@ -6,11 +6,11 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=48
-#SBATCH --partition=main
+#SBATCH --partition=calc
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=henry.schoeller@fu-berlin.de    
-#SBATCH --mem=182G
-#SBATCH --nodelist=calc03                                                                  
+#SBATCH --mem=122G
+#SBATCH --nodelist=calc04                                                                  
 
 export OMP_NUM_THREADS=1
 export MKL_NUM_THREADS=1
@@ -30,7 +30,7 @@ done &
 # Rscript /net/scratch/schoelleh96/WP2/WP2.2a/RScripts/composites_permuted.r
 # Rscript /net/scratch/schoelleh96/WP2/WP2.2a/RScripts/WR_Log_Var_Raw.r
 
-VARS_SHORT=("tcc" "mcc" "hcc")
+VARS_SHORT=("mcc") #"tcc" "hcc")
 
 for i in "${!VARS_SHORT[@]}"; do
     VAR_SHORT="${VARS_SHORT[$i]}"
