@@ -13,3 +13,7 @@ renv/staging
 *.pyc
 *.nc
 *checkpoint*
+*.Rhistory
+*.RData
+*.gz
+/ELIAS_data/*
