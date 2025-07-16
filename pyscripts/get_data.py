@@ -8,7 +8,7 @@ import argparse
 sys.path.append(os.path.abspath(os.path.join('..', 'pyscripts')))
 
 
-d_path = "/net/scratch/schoelleh96/WP2/WP2.2a/"
+# d_path = "/net/scratch/schoelleh96/WP2/WP2.2a/"
 
 lon_min, lon_max = -80, 40  # Longitude range
 lat_min, lat_max = 30, 90    # Latitude range
