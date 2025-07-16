@@ -30,7 +30,7 @@ done &
 # Rscript /net/scratch/schoelleh96/WP2/WP2.2a/RScripts/composites_permuted.r
 # Rscript /net/scratch/schoelleh96/WP2/WP2.2a/RScripts/WR_Log_Var_Raw.r
 
-VARS_SHORT=("mcc") #"tcc" "hcc")
+VARS_SHORT=("hcc") #"mcc") #"tcc" "hcc")
 
 for i in "${!VARS_SHORT[@]}"; do
     VAR_SHORT="${VARS_SHORT[$i]}"

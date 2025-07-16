@@ -2,7 +2,7 @@
 OUT_DIR <- "/net/scratch/schoelleh96/WP2/WP2.2a/figs/"
 LM_DIR <- "/net/scratch/schoelleh96/WP2/WP2.2a/ens_data/mods/"
 GEO_DIR <- "/net/scratch/schoelleh96/WP2/WP2.2a/geo_data/"
-DATA_DIR <- "/net/scratch/schoelleh96/WP2/WP2.2a/ens_data/"
+ENS_DATA_DIR <- "/net/scratch/schoelleh96/WP2/WP2.2a/ens_data/"
 
 # Geo data
 CRS <- "+proj=laea +lat_0=60 +lon_0=-20 +x_0=0 +y_0=0
@@ -16,7 +16,7 @@ GRAT_LON <- seq(-90, 45, 45)
 TIME_STEPS <- 31013
 N_COEFFS <- 30
 YEAR_BOUND <- c(1940, 2024)
-CP <- c("1948-05", "1958-05", "1979-02", "1998-08", "2009-07")
+CP <- c("1948-09", "1957-08", "1979-03", "1998-08", "2009-01")
 
 # Statistical tests
 ALPHA <- 0.05
