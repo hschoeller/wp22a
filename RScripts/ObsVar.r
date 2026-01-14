@@ -4,11 +4,9 @@ source("RScripts/algo_functions.r")
 
 
 args <- commandArgs(trailingOnly = TRUE)
-CHUNK_DIR <- args[1]
-
-
-# Constants
-OUT_DIR <- "/net/scratch/schoelleh96/WP2/WP2.2a/ens_data/mods/"
+CHUNK_DIR <- paste0(args[1], "zg_chunks/")
+CHUNK_NO <- as.integer(args[2]) +1
+OUT_DIR <- paste0(args[1], "mods/")
 
 # Change points
 # Convert to Date objects for easier comparison
@@ -156,16 +154,18 @@ process_wrapper <- function(chunk_idx) # , grid_points, lat_data, lon_data, z_da
 }
 
 
-Sys.setenv(OMP_NUM_THREADS = "1")
-Sys.setenv(MKL_NUM_THREADS = "1")
-Sys.setenv(OPENBLAS_NUM_THREADS = "1")
-Sys.setenv(BLIS_NUM_THREADS = "1")
-Sys.setenv(NUMEXPR_NUM_THREADS = "1")
-Sys.setenv(R_THREADS = "1")
+# Sys.setenv(OMP_NUM_THREADS = "1")
+# Sys.setenv(MKL_NUM_THREADS = "1")
+# Sys.setenv(OPENBLAS_NUM_THREADS = "1")
+# Sys.setenv(BLIS_NUM_THREADS = "1")
+# Sys.setenv(NUMEXPR_NUM_THREADS = "1")
+# Sys.setenv(R_THREADS = "1")
 
-num_chunks <- 48
-num_cores <- 48
-mclapply(1:num_chunks, process_wrapper, mc.cores = num_cores)
+process_wrapper(CHUNK_NO)
+
+# num_chunks <- 48
+# num_cores <- 48
+# mclapply(1:num_chunks, process_wrapper, mc.cores = num_cores)
 
 # parallelization didnt work bc of oom errors
 

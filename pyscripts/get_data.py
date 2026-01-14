@@ -13,7 +13,7 @@ sys.path.append(os.path.abspath(os.path.join('..', 'pyscripts')))
 lon_min, lon_max = -80, 40  # Longitude range
 lat_min, lat_max = 30, 90    # Latitude range
 year_min = 1940
-year_max = 2024
+year_max = 2025
 
 
 def parse_arguments():
@@ -51,6 +51,13 @@ def parse_arguments():
         type=str,
         help="Ensemble Spread of Analysis?"
     )
+    parser.add_argument(
+        "d_path",
+        nargs='?',  # Make optional for backwards compatibility
+        type=str,
+        help="Data path"
+    )
+
 
     return parser.parse_args()
 
@@ -58,11 +65,13 @@ def parse_arguments():
 def main():
 
     args = parse_arguments()
-
+    d_path = args.d_path
     var_name = args.variable_name
     d_path_full = f"{d_path}/ens_data/" if args.ens.lower() == 'true' else f"{d_path}/data/"
+    os.makedirs(d_path_full, exist_ok=True)
 
     years = [f'{y}' for y in range(year_min, year_max + 1)]
+    print(f"Downloading {var_name} from {args.dataset} ({args.product_type}) to {d_path_full}")
     grib_file = du.retrieve_era5(
         years=years,
         lat_min=lat_min,

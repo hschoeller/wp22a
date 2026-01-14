@@ -1,7 +1,7 @@
 import xarray as xr
 import numpy as np
 import os
-import xesmf as xe
+# import xesmf as xe
 import argparse
 import sys
 
@@ -52,7 +52,6 @@ def split_nc_file(input_file_path, output_dir, num_chunks, do_regrid=True):
     lat_indices = np.linspace(0, len(lats), lat_chunks + 1, dtype=int)
     lon_indices = np.linspace(0, len(lons), lon_chunks + 1, dtype=int)
 
-    # Create output directory if it doesn't exist
     os.makedirs(output_dir, exist_ok=True)
 
     # Initialize chunk ID counter

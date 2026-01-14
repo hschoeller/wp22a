@@ -1,12 +1,13 @@
 import numpy as np
 import xarray as xr
-from scipy.signal import detrend
+# from scipy.signal import detrend
 import os
-import cfgrib
+# import cfgrib
 import logging
 import cdsapi
 import zipfile
-import dask
+import shutil
+# import dask
 
 
 def retrieve_era5(
@@ -77,14 +78,22 @@ def retrieve_era5(
     c.retrieve(dataset, request, d_path + f_name)
 
     # Unzip the downloaded file
-    with zipfile.ZipFile(f"{d_path}/{f_name}", 'r') as zip_ref:
-        zip_ref.extract("data.grib", path=d_path, pwd=None)
-        extracted_file = os.path.join(d_path, "data.grib")
-        target_file = os.path.join(d_path, f"{var}.grib")
-        if os.path.exists(target_file):
-            os.remove(target_file)
-        os.rename(extracted_file, target_file)
+    with zipfile.ZipFile(f"{d_path}/{f_name}", "r") as z:
+        member = next((m for m in z.namelist() if m.endswith("data.grib")), None)
+        if member is None:
+            raise FileNotFoundError(f"'data.grib' not found in {f_name}: {z.namelist()}")
+        with z.open(member) as src, open(os.path.join(d_path, f"{var}.grib"), "wb") as dst:
+            shutil.copyfileobj(src, dst)
     os.remove(f"{d_path}/{f_name}")
+
+    # with zipfile.ZipFile(f"{d_path}/{f_name}", 'r') as zip_ref:
+    #     zip_ref.extract("data.grib", path=d_path, pwd=None)
+    #     extracted_file = os.path.join(d_path, "data.grib")
+    #     target_file = os.path.join(d_path, f"{var}.grib")
+    #     if os.path.exists(target_file):
+    #         os.remove(target_file)
+    #     os.rename(extracted_file, target_file)
+    # os.remove(f"{d_path}/{f_name}")
     return f"{var}.grib"
 
 
@@ -112,7 +121,8 @@ def convert_grib_to_nc(d_path, grib_name, cleanup=True):
 
         ds = xr.open_dataset(os.path.join(d_path, grib_name), engine='cfgrib')
         print(ds)
-
+        if "number" in ds.coords:
+            ds = ds.drop_vars("number")
         lat_name = [dim for dim in ds.dims if 'lat' in dim][0]
         lon_name = [dim for dim in ds.dims if 'lon' in dim][0]
         print(f"Latitude name: {lat_name}, Longitude name: {lon_name}")
@@ -135,7 +145,7 @@ def convert_grib_to_nc(d_path, grib_name, cleanup=True):
         nc_filename = f"{base_name}.nc"
         nc_filepath = os.path.join(d_path, nc_filename)
         print(f"Saving to NetCDF file: {nc_filepath}")
-        ds.to_netcdf(nc_filepath)
+        ds.to_netcdf(nc_filepath, format="NETCDF4")
 
         # Close and optionally clean up
         ds.close()
