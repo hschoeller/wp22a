@@ -4,14 +4,14 @@
 #SBATCH --output=logs/GetData_%A_%a.out
 #SBATCH --error=logs/GetData_%A_%a.err
 
-#SBATCH --array=0-4
+#SBATCH --array=1-1
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=128
-#SBATCH --partition=agpfahl
+#SBATCH --cpus-per-task=4
+#SBATCH --partition=main
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=henry.schoeller@fu-berlin.de
-#SBATCH --mem=120G
+#SBATCH --mem=40G
 
 source ~/mambaforge/bin/activate
 conda activate wp22a
@@ -36,6 +36,6 @@ else
 fi
 
 python ../pyscripts/get_data.py "${VAR}" "${DATASET}" "${PRODUCT_TYPE}" "${ENS}" \
-    "/scratch/schoelleh96/wp22a"
-python ../pyscripts/splitter.py "/scratch/schoelleh96/wp22a/${BASEFOLDER}/${VAR}.nc" \
-    "/scratch/schoelleh96/wp22a/${BASEFOLDER}/${VAR_SHORT}_chunks/" --chunks 1 2651 --no-regrid
+    "/net/scratch/schoelleh96/WP2/WP2.2a/"
+# python ../pyscripts/splitter.py "/net/scratch/schoelleh96/WP2/WP2.2a/${BASEFOLDER}/${VAR}.nc" \
+#     "/net/scratch/schoelleh96/WP2/WP2.2a/${BASEFOLDER}/${VAR_SHORT}_chunks/" --chunks 1 48 --no-regrid

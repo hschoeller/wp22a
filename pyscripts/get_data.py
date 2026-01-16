@@ -13,7 +13,7 @@ sys.path.append(os.path.abspath(os.path.join('..', 'pyscripts')))
 lon_min, lon_max = -80, 40  # Longitude range
 lat_min, lat_max = 30, 90    # Latitude range
 year_min = 1940
-year_max = 2025
+year_max = 2024
 
 
 def parse_arguments():
@@ -58,7 +58,6 @@ def parse_arguments():
         help="Data path"
     )
 
-
     return parser.parse_args()
 
 
@@ -71,7 +70,8 @@ def main():
     os.makedirs(d_path_full, exist_ok=True)
 
     years = [f'{y}' for y in range(year_min, year_max + 1)]
-    print(f"Downloading {var_name} from {args.dataset} ({args.product_type}) to {d_path_full}")
+    print(
+        f"Downloading {var_name} from {args.dataset} ({args.product_type}) to {d_path_full}")
     grib_file = du.retrieve_era5(
         years=years,
         lat_min=lat_min,

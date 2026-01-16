@@ -1,3 +1,6 @@
+library(data.table)
+library(dplyr)
+
 #' Load Weather Regime Indices and Life Cycles
 #'
 #' Loads weather regime indices and life cycles from ERA-Interim or ERA5
@@ -147,3 +150,21 @@ wrera <- function(start, end, hours, tformat, setup, dataset, basepath) {
 
     return(list(dtimes = dtimes, data = data))
 }
+
+
+# # Example usage
+
+# result <- wrera(
+#     start = "19500111_00",
+#     end = "20250113_21",
+#     hours = c("00", "06", "12", "18"),
+#     tformat = "string",
+#     setup = "z500anom_1979_2019_on_wrdef_10d_1.0_1979_2019",
+#     dataset = "era5",
+#     basepath = "../WR_read_example_package/wr_era5_update_1950_latwgt/"
+# )
+
+# wr_df <- result$data$LC %>%
+#     filter(grepl("12$", time))
+# wr_df$date <- as.Date(wr_df$time, format = "%Y%m%d_%H")
+# tail(wr_df)

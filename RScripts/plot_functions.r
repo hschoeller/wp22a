@@ -21,7 +21,10 @@ THEME_PUB <- theme_minimal() +
         # axis.title = element_blank(),
         legend.position = "bottom",
         # legend.title = element_blank(),
-        panel.background = element_rect(fill = "white", color = NA)
+        axis.text.x = element_text(size = 10, angle = 90, hjust = 1),
+        legend.title = element_text(size = 10),
+        panel.background = element_rect(fill = "white", color = NA),
+        axis.title.y = element_text(size = 10),
     )
 
 THEME_PUB_LARGE <- theme_minimal(base_size = 16) +
@@ -51,10 +54,14 @@ get_continuous_scale <- function(clims = NULL) {
 }
 
 get_categorical_scale <- function(clims = NULL) {
-    return(scale_color_scico_d(
+    return(scale_color_brewer(
         aesthetics = c("color", "fill"),
-        palette = CONT_SEQ_SCALE
+        palette = "Dark2"
     ))
+    # return(scale_color_scico_d(
+    #     aesthetics = c("color", "fill"),
+    #     palette = CONT_SEQ_SCALE
+    # ))
 }
 
 get_diverging_scale <- function(clims = NULL) {
@@ -359,14 +366,15 @@ add_contour <- function(
 plot_change_points <- function(data,
                                cp_df,
                                theme_pub = NULL,
-                               show_ci = TRUE) {
+                               show_ci = TRUE,
+                               title = "North Atlantic monthly mean g500 ensemble variance") {
     p <- ggplot(data = data, aes(x = date, y = log_variance)) +
-        geom_line(aes(size = "Assimilated"), linewidth = .25) +
+        geom_line(aes(size = "Assimilated"), linewidth = .2) +
         labs(
             x = "Year",
-            y = TeX("$\\log(\\sigma^{2}_{EDA})$"),
-            title = "North Atlantic monthly mean g500 ensemble variance",
-            color = "Change Points"
+            y = TeX("$\\log(\\sigma_{EDA})$"),
+            title = title,
+            color = "Break Points"
         ) +
         scale_x_date(date_breaks = "5 year", date_labels = "%Y") +
         get_categorical_scale()
@@ -399,7 +407,7 @@ plot_change_points <- function(data,
                         fill = factor(cp_no)
                     ),
                     ymin = -Inf, ymax = Inf,
-                    alpha = 0.2,
+                    alpha = 0.25,
                     inherit.aes = FALSE,
                     show.legend = FALSE
                 )
@@ -423,7 +431,7 @@ plot_change_points <- function(data,
                 angle = 90,
                 vjust = -0.5,
                 hjust = 0,
-                size = 5,
+                size = 3,
                 show.legend = FALSE
             ) +
             guides(color = guide_legend(
@@ -436,7 +444,8 @@ plot_change_points <- function(data,
                 legend.title = element_text(size = 10),
                 legend.text = element_text(size = 10),
                 legend.key.size = unit(1, "lines")
-            )
+            ) +
+            get_categorical_scale()
     }
     return(p)
 }
@@ -469,7 +478,7 @@ add_fitted_line_ci <- function(model, data, line_color = "red",
     list(
         geom_line(
             data = preds, aes(x = date, y = fit, size = "Fitted"),
-            color = line_color, linewidth = .25
+            color = line_color, linewidth = .2, alpha = .8
         ),
         geom_ribbon(
             data = preds, aes(x = date, ymin = lwr, ymax = upr),

@@ -100,7 +100,7 @@ read_nc_variable <- function(file_path, var_name) {
 #'
 #' @export
 load_lm_objects <- function(lm_dir = LM_DIR) {
-    lm_files <- list.files(lm_dir, pattern = "^lm.*\\.Rds", full.names = TRUE)
+    lm_files <- list.files(lm_dir, pattern = "^lm.*\\.Rds", full.names = FALSE)
     lm_files <- lm_files
 
     # Extract lat/lon from filenames
@@ -112,7 +112,7 @@ load_lm_objects <- function(lm_dir = LM_DIR) {
 
     # Load models and extract diagnostics
     lm_data <- purrr::map_dfr(seq_along(lm_files), function(i) {
-        lm_obj <- readRDS(lm_files[i])
+        lm_obj <- readRDS(paste0(LM_DIR, lm_files[i]))
         segment_range <- range(as.numeric(unique(lm_obj$model$segment)))
         # Model-level diagnostics (broom::glance)
         model_summary <- broom::glance(lm_obj)
@@ -190,6 +190,8 @@ load_lm_objects <- function(lm_dir = LM_DIR) {
 
     return(lm_data)
 }
+
+
 
 # Some helper functions for data loaded as above
 
@@ -892,89 +894,70 @@ tibble_to_long <- function(df) {
 
 #---------------------- WR Composite Functions --------------------------------
 
-#' Calculate Composite Values from Linear Models (without permutation test)
-#'
-#' This function calculates mean and variance of residuals for each combination
-#' of geographical coordinates and weather regime indices using purrr.
-#' The function reconstructs dates from the year predictor in the linear models.
-#'
-#' @param df A data frame with columns tsince, time, wrindex, and wrname
-#' @param lm_dir Directory path where the linear model .Rds files are stored
-#' @return A data frame with columns lon, lat, wr, wrname, mean, and variance
-calculate_composite_values <- function(df, lm_dir) {
-    # Get LM files and coordinates
-    lm_files <- list.files(lm_dir, pattern = "^lm.*\\.Rds", full.names = TRUE)
-    coords <- stringr::str_extract_all(lm_files, "-?\\d+\\.?\\d*",
-        simplify = TRUE
-    )
+permute_test <- function(
+    data, category_dates, var_name = "log_variance",
+    n_perm = 1000) {
+    # Extract data for the category
+    category_data <- data[data$time %in% category_dates, ]
+    observed_mean <- mean(category_data[[var_name]], na.rm = TRUE)
+    # Get baseline mean
+    baseline_mean <- mean(data[[var_name]], na.rm = TRUE)
+    # Get run blocks for this category
+    full_dates <- sort(unique(data$time))
+    blocks <- get_run_blocks(full_dates, category_dates)
 
-    # Create lookup table for wrindex to wrname
-    wr_lookup <- unique(df[, c("wrindex", "wrname")])
-    wr_indices <- unique(df$wrindex)
-
-    # Create a data frame of all combinations to process
-    lm_info <- tibble::tibble(
-        file = lm_files,
-        lat = as.numeric(coords[, 1]),
-        lon = as.numeric(coords[, 2])
-    )
-
-    # Process each model file and weather regime combination
-    purrr::map_dfr(1:nrow(lm_info), function(i) {
-        # Load the linear model
-        file_path <- lm_info$file[i]
-        lat <- lm_info$lat[i]
-        lon <- lm_info$lon[i]
-        current_lm <- readRDS(file_path)
-
-        # Extract model data
-        model_data <- current_lm$model
-
-        # Reconstruct dates from year
-        min_year <- min(model_data$year)
-        start_date <- as.Date(paste0(min_year, "-01-01"))
-
-        # Add date information
-        model_data <- model_data %>%
-            dplyr::arrange(year) %>%
-            dplyr::mutate(
-                global_day = dplyr::row_number(),
-                date = start_date + (global_day - 1)
-            )
-        # Order residuals according to the arranged model_data
-        residuals_ordered <- current_lm$residuals[order(model_data$year)]
-        # Process each weather regime
-        purrr::map_dfr(wr_indices, function(wr) {
-            # Get wrname for this index
-            wrname <- wr_lookup$wrname[wr_lookup$wrindex == wr][1]
-
-            # Get dates for the current weather regime
-            wr_dates <- df$date[df$wrindex == wr]
-            # Find overlapping dates between reconstructed dates and weather regime
-            date_indices <- which(model_data$date %in% wr_dates)
-            # Extract residuals for matched dates (will be empty if no matches)
-            residuals_subset <- residuals_ordered[date_indices]
-            # Calculate statistics - safely handle empty cases
-            res_mean <- ifelse(length(residuals_subset) > 0,
-                mean(residuals_subset, na.rm = TRUE),
-                NA
-            )
-            res_variance <- ifelse(length(residuals_subset) > 0,
-                var(residuals_subset, na.rm = TRUE),
-                NA
-            )
-
-            # Return a single row - always return data even for empty cases
-            tibble::tibble(
-                lon = lon,
-                lat = lat,
-                wr = wr,
-                wrname = wrname,
-                mean = res_mean,
-                variance = res_variance
-            )
-        })
+    # Generate surrogate means
+    surrogate_means <- replicate(n_perm, {
+        surrogate_dates <- permute_blocks(blocks, full_dates)
+        surrogate_data <- data[data$time %in% surrogate_dates, ]
+        mean(surrogate_data[[var_name]], na.rm = TRUE)
     })
+    # Calculate p-value (two-tailed test)
+    # Test if observed anomaly is significantly different from surrogate anomalies
+    observed_anomaly <- observed_mean - baseline_mean
+    surrogate_anomalies <- surrogate_means - baseline_mean
+
+    p_value <- mean(abs(surrogate_anomalies) >= abs(observed_anomaly))
+    return(list(mean = observed_mean, p_val = p_value))
+}
+
+
+# Function to process a single weather regime for a single grid point.
+# This function calculates the observed composite value and the permutation
+# p-value.
+process_wr_composite <- function(
+    wr, model_data, residuals_ordered, df,
+    wr_lookup, surrogate_dates_list) {
+    # Get weather regime name from lookup
+    wrname <- wr_lookup$wrname[wr_lookup$wrindex == wr][1]
+
+    # Observed composite: get dates for the wr and calculate the mean residual
+    wr_dates_obs <- df$date[df$wrindex == wr]
+    date_indices <- which(model_data$date %in% wr_dates_obs)
+    obs_resid_subset <- residuals_ordered[date_indices]
+    obs_composite <- mean(obs_resid_subset, na.rm = TRUE)
+
+    # Permutation composites
+    surrogate_list <- surrogate_dates_list[[as.character(wr)]]
+    permuted_composites <- sapply(surrogate_list, function(surr_dates) {
+        indices <- which(model_data$date %in% surr_dates)
+        res <- residuals_ordered[indices]
+        mean(res, na.rm = TRUE)
+    })
+
+    # Two-tailed p-value based on the absolute observed composite value.
+    # p = probability that a composite mean as least as large (in absolute
+    # values) as the observed composite mean occurs by chance.
+    p_value <- mean(abs(permuted_composites) >= abs(obs_composite),
+        na.rm = TRUE
+    )
+
+    tibble(
+        wr = wr,
+        wrname = wrname,
+        mean = obs_composite,
+        p_value = p_value
+    )
 }
 
 # A few helpers for permutation tested composites
@@ -1033,73 +1016,6 @@ permute_blocks <- function(blocks, full_dates) {
     }
     surrogate_dates <- full_dates[which(surrogate_indicator == 1)]
     return(surrogate_dates)
-}
-
-permute_test <- function(
-    data, category_dates, var_name = "log_variance",
-    n_perm = 1000) {
-    # Extract data for the category
-    category_data <- data[data$time %in% category_dates, ]
-    observed_mean <- mean(category_data[[var_name]], na.rm = TRUE)
-    # Get baseline mean
-    baseline_mean <- mean(data[[var_name]], na.rm = TRUE)
-    # Get run blocks for this category
-    full_dates <- sort(unique(data$time))
-    blocks <- get_run_blocks(full_dates, category_dates)
-
-    # Generate surrogate means
-    surrogate_means <- replicate(n_perm, {
-        surrogate_dates <- permute_blocks(blocks, full_dates)
-        surrogate_data <- data[data$time %in% surrogate_dates, ]
-        mean(surrogate_data[[var_name]], na.rm = TRUE)
-    })
-    # Calculate p-value (two-tailed test)
-    # Test if observed anomaly is significantly different from surrogate anomalies
-    observed_anomaly <- observed_mean - baseline_mean
-    surrogate_anomalies <- surrogate_means - baseline_mean
-
-    p_value <- mean(abs(surrogate_anomalies) >= abs(observed_anomaly))
-    return(list(mean = observed_mean, p_val = p_value))
-}
-
-
-
-# Function to process a single weather regime for a single grid point.
-# This function calculates the observed composite value and the permutation
-# p-value.
-process_wr_composite <- function(
-    wr, model_data, residuals_ordered, df,
-    wr_lookup, surrogate_dates_list) {
-    # Get weather regime name from lookup
-    wrname <- wr_lookup$wrname[wr_lookup$wrindex == wr][1]
-
-    # Observed composite: get dates for the wr and calculate the mean residual
-    wr_dates_obs <- df$date[df$wrindex == wr]
-    date_indices <- which(model_data$date %in% wr_dates_obs)
-    obs_resid_subset <- residuals_ordered[date_indices]
-    obs_composite <- mean(obs_resid_subset, na.rm = TRUE)
-
-    # Permutation composites
-    surrogate_list <- surrogate_dates_list[[as.character(wr)]]
-    permuted_composites <- sapply(surrogate_list, function(surr_dates) {
-        indices <- which(model_data$date %in% surr_dates)
-        res <- residuals_ordered[indices]
-        mean(res, na.rm = TRUE)
-    })
-
-    # Two-tailed p-value based on the absolute observed composite value.
-    # p = probability that a composite mean as least as large (in absolute
-    # values) as the observed composite mean occurs by chance.
-    p_value <- mean(abs(permuted_composites) >= abs(obs_composite),
-        na.rm = TRUE
-    )
-
-    tibble(
-        wr = wr,
-        wrname = wrname,
-        mean = obs_composite,
-        p_value = p_value
-    )
 }
 
 # Function to process one grid point (one lm file)
