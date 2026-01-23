@@ -461,6 +461,49 @@ calculate_monthly_averages <- function(file_name) {
         arrange(month)
 }
 
+# --- For gls data
+
+add_fdr_pvalues_to_coefs <- function(models_df, method = "fdr") {
+    stopifnot("coefs" %in% names(models_df))
+
+    library(dplyr)
+    library(tidyr)
+
+    models_df <- models_df %>%
+        mutate(.id = row_number())
+
+    coef_long <- models_df %>%
+        select(.id, coefs) %>%
+        unnest(coefs)
+
+    coef_long <- coef_long %>%
+        group_by(term) %>%
+        mutate(p.value_adj = p.adjust(p.value, method = method)) %>%
+        ungroup()
+
+    coefs_adj <- coef_long %>%
+        group_by(.id) %>%
+        summarise(
+            coefs = list(
+                data.frame(
+                    term,
+                    estimate,
+                    std.error,
+                    t.value,
+                    p.value,
+                    p.value_adj
+                )
+            ),
+            .groups = "drop"
+        )
+
+    models_df %>%
+        select(-coefs) %>% # <-- do NOT drop .id yet
+        left_join(coefs_adj, by = ".id") %>%
+        select(-.id) # <-- drop it only at the end
+}
+
+
 wrera <- function(start, end, hours, tformat, setup, dataset, basepath) {
     #' Load weather regime indices and life cycles from era-interim or era5
     #' for a specific period (for details about the weather regimes
