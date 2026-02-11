@@ -298,48 +298,6 @@ preprocess_pval <- function(data,
     return(heatmap_data)
 }
 
-#' Load Model Data for Specified Grid Points
-#'
-#' This function loads and processes model data for multiple grid points,
-#' combining predictor data and observed/fitted values into a single data frame.
-#'
-#' @param lon A numeric vector of longitudes for the grid points.
-#' @param lat A numeric vector of latitudes for the grid points.
-#' @param lm_dir A string specifying the directory containing the model files.
-#' @param conf_level A numeric value specifying the confidence level for
-#'   prediction intervals (default is 0.95).
-#'
-#' @return A data frame containing:
-#'   - Predictor data (e.g., year, segment, sin_doy, cos_doy, doy, date).
-#'   - Observed response values (`log_variance`) for each grid point.
-#'   - Fitted values, residuals, and confidence intervals for each grid point.
-#'
-#' @details
-#' The function performs the following steps:
-#'   1. Identifies valid grid points for which model files exist.
-#'   2. Extracts common predictor data from the first valid grid point.
-#'   3. Constructs a master data frame with predictor variables arranged
-#'      chronologically.
-#'   4. For each grid point, extracts observed response values, fitted values,
-#'      residuals, and confidence intervals.
-#'   5. Combines the predictor data with the observed/fitted data into a
-#'      single data frame.
-#'
-#' @examples
-#' \dontrun{
-#' lon <- c(10, 20, 30)
-#' lat <- c(50, 60, 70)
-#' lm_dir <- "/path/to/model/files"
-#' conf_level <- 0.95
-#' result <- load_model_data(lon, lat, lm_dir, conf_level)
-#' head(result)
-#' }
-#'
-#' @importFrom purrr map2_lgl map2_dfc
-#' @importFrom dplyr arrange mutate select bind_cols
-#' @importFrom lubridate yday
-#' @importFrom tibble tibble
-#' @export
 load_model_data <- function(lon, lat, lm_dir, conf_level = 0.95) {
     # Find indices for which the model file exists
     valid_indices <- which(purrr::map2_lgl(lon, lat, ~ {
@@ -1239,4 +1197,335 @@ calculate_wr_composites <- function(
     }
 
     rbindlist(out)
+}
+# ─────────────────────────────────────────────────────────────────────────────
+# 1. Circular confidence interval (simplified)
+# ─────────────────────────────────────────────────────────────────────────────
+circular_CI <- function(angles, alpha = 0.05) {
+    angles <- angles %% (2 * pi)
+    n <- length(angles)
+
+    if (n == 0) {
+        return(list(lower = NA_real_, upper = NA_real_))
+    }
+    if (n == 1) {
+        return(list(lower = angles[1], upper = angles[1]))
+    }
+
+    # number of points to include in the shortest arc
+    m <- floor((1 - alpha) * n)
+    m <- max(1, min(n - 1, m)) # keep in [1, n-1]
+
+    angles_sorted <- sort(angles)
+    angles_ext <- c(angles_sorted, angles_sorted + 2 * pi)
+
+    # widths for arcs starting at each of the n points
+    widths <- angles_ext[(1:n) + m] - angles_ext[1:n]
+    idx_min <- which.min(widths)
+
+    list(
+        lower = angles_ext[idx_min] %% (2 * pi),
+        upper = angles_ext[idx_min + m] %% (2 * pi)
+    )
+}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 2. Bootstrap CI for seasonal parameters (simplified)
+# ─────────────────────────────────────────────────────────────────────────────
+get_seasonal_CI <- function(gls_model, B = 5000, alpha = 0.05,
+                            coeffs = NULL, varBeta = NULL,
+                            doy_origin = 1) {
+    if (is.null(coeffs)) coeffs <- coef(gls_model)
+    var_matrix <- if (is.null(varBeta)) gls_model$varBeta else varBeta
+
+    nm <- names(coeffs)
+
+    has_mon <- any(grepl("sin_mon", nm)) && any(grepl("cos_mon", nm))
+    has_doy <- any(grepl("sin_doy", nm)) && any(grepl("cos_doy", nm))
+
+    if (has_mon && has_doy) {
+        stop("Both mon and doy terms detected, but code assumes this never happens.")
+    }
+    if (!has_mon && !has_doy) {
+        return(tibble::tibble())
+    }
+
+    basis <- if (has_mon) "mon" else "doy"
+    sin_pat <- paste0("sin_", basis)
+    cos_pat <- paste0("cos_", basis)
+
+    sin_idx <- grep(sin_pat, nm)
+    cos_idx <- grep(cos_pat, nm)
+    if (length(sin_idx) == 0 || length(cos_idx) == 0) {
+        return(tibble::tibble())
+    }
+    if (length(sin_idx) != length(cos_idx)) {
+        stop("Different counts of sin and cos terms; need paired terms per segment.")
+    }
+
+    sin_names <- nm[sin_idx]
+    segments <- if (any(grepl(":", sin_names))) {
+        sub(paste0(":sin_", basis, "$"), "", sin_names)
+    } else {
+        "seasonal_model"
+    }
+    S <- length(segments)
+
+    beta_sin <- coeffs[sin_idx]
+    beta_cos <- coeffs[cos_idx]
+
+    # amplitude
+    R_hat <- sqrt(beta_sin^2 + beta_cos^2)
+
+    # ---- phase to plot angle (Jan at top, clockwise) ----
+    #
+    # Model form typically: f(t) = a*cos(w t) + b*sin(w t)
+    # Peak occurs at angle theta_peak = atan2(b, a)
+    #
+    # Your plot uses angle = pi/2 at "Jan" and goes clockwise.
+    # We'll convert the peak angle into that coordinate system.
+    #
+    theta_peak <- atan2(beta_sin, beta_cos) # in [-pi, pi]
+
+    # Align origin:
+    # - for mon: treat t=Jan as origin already (consistent with your previous shift)
+    # - for doy: allow shifting by doy_origin (default DOY 1 = Jan 1)
+    #
+    # Convert doy_origin to radians of the annual cycle:
+    doy_shift <- if (basis == "doy") 2 * pi * ((doy_origin - 1) / 365) else 0
+
+    # plotting angle: Jan at pi/2, clockwise => pi/2 - (theta + shift)
+    phi_hat <- (pi / 2 - (theta_peak + doy_shift)) %% (2 * pi)
+
+    # Bootstrap
+    param_idx <- c(sin_idx, cos_idx)
+    boot_samples <- MASS::mvrnorm(
+        n = B,
+        mu = coeffs[param_idx],
+        Sigma = var_matrix[param_idx, param_idx, drop = FALSE]
+    )
+
+    sin_boot <- boot_samples[, 1:S, drop = FALSE]
+    cos_boot <- boot_samples[, (S + 1):(2 * S), drop = FALSE]
+
+    R_boot <- sqrt(sin_boot^2 + cos_boot^2)
+    R_ci <- apply(R_boot, 2, stats::quantile,
+        probs = c(alpha / 2, 1 - alpha / 2), na.rm = TRUE
+    )
+
+    theta_peak_boot <- atan2(sin_boot, cos_boot)
+    phi_boot <- (pi / 2 - (theta_peak_boot + doy_shift)) %% (2 * pi)
+
+    phi_ci <- purrr::map_dfr(1:S, ~ {
+        ci <- circular_CI(phi_boot[, .x], alpha)
+        tibble::tibble(phi_lwr = ci$lower, phi_upr = ci$upper)
+    })
+
+    segment_clean <- dplyr::case_when(
+        segments == "seasonal_model" ~ "all",
+        grepl("^segment", segments) ~ gsub("segment", "", segments),
+        TRUE ~ segments
+    )
+
+    tibble::tibble(
+        segment_clean = segment_clean,
+        R = as.numeric(R_hat),
+        R_lwr = R_ci[1, ],
+        R_upr = R_ci[2, ],
+        phi = as.numeric(phi_hat),
+        x = R * cos(phi),
+        y = R * sin(phi)
+    ) %>% dplyr::bind_cols(phi_ci)
+}
+
+
+read_point <- function(minmax, nc_path, nc_var) {
+    nc <- nc_open(nc_path)
+    on.exit(nc_close(nc), add = TRUE)
+
+    lon <- ncvar_get(nc, "longitude")
+    lat <- ncvar_get(nc, "latitude")
+    time_data <- ncvar_get(nc, "valid_time")
+
+    ix <- match(minmax$lon, lon) # exact match
+    iy <- match(minmax$lat, lat) # exact match
+    if (is.na(ix) || is.na(iy)) stop("lon/lat not found exactly in nc grid.")
+
+    z <- ncvar_get(nc, nc_var, start = c(ix, iy, 1), count = c(1, 1, -1)) |> as.numeric()
+
+    time_origin <- sub(
+        "seconds since ", "",
+        ncatt_get(nc, "valid_time", "units")$value
+    )
+    time <- as.Date(as.POSIXct(time_data, origin = time_origin, tz = "UTC"))
+
+    tibble(time = time, z = z)
+}
+
+make_design_data <- function(time, z, cps) {
+    z_df <- tibble(time = time, z = z) %>%
+        mutate(
+            year = as.integer(format(time, "%Y")),
+            doy = as.integer(format(time, "%j")),
+            sin_doy = sin(2 * pi * doy / 365),
+            cos_doy = cos(2 * pi * doy / 365),
+            log_variance = log(z),
+            segment = cut(as.Date(time),
+                breaks = c(as.Date(c(time[1], cps, time[length(time)]))),
+                labels = 0:(length(cps)) + 1,
+                include.lowest = TRUE,
+                right = FALSE
+            )
+        ) %>%
+        group_by(segment) %>%
+        mutate(day_no = row_number()) %>%
+        ungroup() %>%
+        filter(is.finite(log_variance))
+
+    z_df
+}
+
+daily_fit_ci <- function(daily_df, beta, V_beta, level = 0.95) {
+    form <- log_variance ~ segment + segment:year + segment:sin_doy + segment:cos_doy - 1
+    X <- model.matrix(form, data = daily_df)
+
+    # align to beta names
+    want <- names(beta)
+    miss <- setdiff(want, colnames(X))
+    if (length(miss) > 0) {
+        X <- cbind(X, matrix(0, nrow(X), length(miss), dimnames = list(NULL, miss)))
+    }
+    X <- X[, want, drop = FALSE]
+    V_beta <- V_beta[want, want, drop = FALSE]
+
+    fit <- as.numeric(X %*% beta)
+    se <- sqrt(pmax(0, diag(X %*% V_beta %*% t(X))))
+
+    zcrit <- qnorm(1 - (1 - level) / 2)
+
+    tibble(
+        date = as.Date(daily_df$time),
+        fit_log = fit,
+        lwr_log = fit - zcrit * se,
+        upr_log = fit + zcrit * se
+    )
+}
+
+
+monthly_fit_ci <- function(daily_df, beta, V_beta, level = 0.95) {
+    form <- log_variance ~ segment + segment:year + segment:sin_doy + segment:cos_doy - 1
+    X <- model.matrix(form, data = daily_df)
+
+    # align to beta names
+    want <- names(beta)
+    miss <- setdiff(want, colnames(X))
+    if (length(miss) > 0) {
+        X <- cbind(X, matrix(0, nrow(X), length(miss), dimnames = list(NULL, miss)))
+    }
+    X <- X[, want, drop = FALSE]
+    V_beta <- V_beta[want, want, drop = FALSE]
+
+    # month id
+    month <- as.Date(format(daily_df$time, "%Y-%m-01"))
+    n_m <- as.numeric(table(month))
+
+    # A_m = mean design row in month => monthly mean of linear predictor
+    A <- rowsum(X, group = month) / n_m
+
+    fit <- as.numeric(A %*% beta)
+    se <- sqrt(pmax(0, diag(A %*% V_beta %*% t(A))))
+
+    zcrit <- qnorm(1 - (1 - level) / 2)
+
+    tibble(
+        date = as.Date(rownames(A)),
+        fit_log = fit,
+        lwr_log = fit - zcrit * se,
+        upr_log = fit + zcrit * se
+    )
+}
+
+#--- 4) Main: build monthly observations + monthly fitted mean + parameter-only CI for each row of minmax ----
+build_daily_obs_fit_object <- function(nc_path, minmax, nc_var, level = 0.95) {
+    out <- lapply(seq_len(nrow(minmax)), function(i) {
+        row <- minmax[i, ]
+        cps <- as.Date(paste0(CP, "-01"), format = "%Y-%m-%d")
+
+        beta_df <- row$coefs[[1]]
+        beta <- beta_df$estimate
+        names(beta) <- beta_df$term
+        V_beta <- row$vcov_beta[[1]]
+
+        # observations from nc at this exact grid point
+        obs_daily <- read_point(row, nc_path, nc_var)
+
+        # rebuild daily covariates (and log_variance)
+        daily_df <- make_design_data(obs_daily$time, obs_daily$z, cps)
+
+        # daily observations on model scale (comparable): log(z) per day
+        obs_day <- daily_df %>%
+            transmute(
+                date = as.Date(time),
+                obs_log = log_variance,
+                n = 1L
+            )
+
+        # daily fitted mean + parameter-only CI on model scale
+        fit_day <- daily_fit_ci(daily_df, beta, V_beta, level = level)
+
+        # merge
+        obs_day %>%
+            left_join(fit_day, by = "date")
+    })
+
+    tibble(
+        lon = minmax$lon,
+        lat = minmax$lat,
+        marker_shape = minmax$marker_shape,
+        obj = out
+    )
+}
+
+build_monthly_obs_fit_object <- function(nc_path, minmax, nc_var,
+                                         level = 0.95) {
+    out <- lapply(seq_len(nrow(minmax)), function(i) {
+        row <- minmax[i, ]
+        cps <- as.Date(paste0(CP, "-01"), format = "%Y-%m-%d")
+        beta_df <- row$coefs[[1]]
+        beta <- beta_df$estimate
+        names(beta) <- beta_df$term
+        V_beta <- row$vcov_beta[[1]]
+
+        # observations from nc at this exact grid point
+        obs_daily <- read_point(row, nc_path, nc_var)
+
+        # rebuild daily covariates
+        daily_df <- make_design_data(obs_daily$time, obs_daily$z, cps)
+
+        # monthly observations on model scale (comparable): mean of log(z)
+        obs_month <- daily_df %>%
+            mutate(date = as.Date(format(time, "%Y-%m-01"))) %>%
+            group_by(date) %>%
+            summarise(
+                obs_log = mean(log_variance, na.rm = TRUE),
+                n = dplyr::n(),
+                .groups = "drop"
+            )
+
+        # monthly fitted mean + parameter-only CI on model scale
+        fit_month <- monthly_fit_ci(daily_df, beta, V_beta, level = level)
+
+        # merge
+        merged <- obs_month %>%
+            left_join(fit_month, by = "date")
+    })
+
+    # convenient: return a tibble with list-columns
+    tibble(
+        lon = minmax$lon,
+        lat = minmax$lat,
+        marker_shape = minmax$marker_shape,
+        obj = out
+    )
 }
