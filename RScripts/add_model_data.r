@@ -4,7 +4,7 @@ source("RScripts/data_functions.r")
 source("RScripts/algo_functions.r")
 
 args <- commandArgs(trailingOnly = TRUE)
-CHUNK_DIR <- paste0(args[1], "zg_chunks/")
+CHUNK_DIR <- args[1]
 CHUNK_NO <- as.integer(args[2]) +1
 OUT_DIR <- paste0(args[1], "mods/")
 

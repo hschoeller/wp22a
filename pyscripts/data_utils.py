@@ -160,6 +160,32 @@ def convert_grib_to_nc(d_path, grib_name, cleanup=True):
         print(f"Error during conversion: {str(e)}")
         return False
 
+def calc_ens_spread(d_path, var_name, var_short_name):
+    infile = os.path.join(d_path, f"{var_name}.nc")
+    tmpfile = os.path.join(d_path, f"{var_name}.nc.tmp")
+
+    print(f"opening file {infile}")
+
+    # 1. open original
+    ds = xr.open_dataset(infile)
+    print(ds)
+
+    # 2. compute ensemble spread (all members, ddof=0)
+    spread = ds[var_short_name].std(dim="number")
+
+    # 3. create output dataset (keep global attributes)
+    out = spread.to_dataset(name=var_short_name)
+    out.attrs = ds.attrs
+
+    # 4. write to temporary file
+    out.to_netcdf(tmpfile)
+
+    # 5. close files explicitly
+    ds.close()
+    out.close()
+
+    # 6. atomically replace original file
+    os.replace(tmpfile, infile)
 
 def detrend_1d(data):
     # Apply detrend

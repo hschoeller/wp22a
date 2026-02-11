@@ -7,7 +7,7 @@ source("RScripts/config.r")
 source("RScripts/data_functions.r")
 source("RScripts/algo_functions.r")
 
-LM_DIR <- "/scratch/schoelleh96/wp22a/ens_data/mods/"
+LM_DIR <- "/scratch/schoelleh96/wp22a/ens_data/z_chunks/mods/"
 # OUT_FILE <- file.path(LM_DIR, "gls_model_summary.rds")
 OUT_FILE <- "/home/schoelleh96/wp22a/gls_model_summary.rds"
 # number of parallel workers (can be overridden by env var)
@@ -77,9 +77,7 @@ summarize_gls_folder <- function(folder, n_cores = 1L) {
 
     fit_vals <- numeric(2)
     for (i in seq_along(YEAR_BOUND)) {
-      nd <- dat
-      nd$year <- YEAR_BOUND[i]
-      fit_vals[i] <- mean(predict(mod, newdata = nd), na.rm = TRUE)
+      fit_vals[i] <- mean(predict(mod, newdata = dat[dat$year == YEAR_BOUND[i], ]), na.rm = TRUE)
     }
 
     s <- summary(mod)
@@ -160,6 +158,13 @@ summarize_gls_folder <- function(folder, n_cores = 1L) {
     }
     phi <- unname(coef(mod$modelStruct$corStruct, unconstrained = FALSE))
     n_eff <- n * (1 - phi) / (1 + phi)
+    vs <- mod$modelStruct$varStruct
+    seg_levels <- attr(vs, "groupNames")  # e.g. c("1","2","3","4","5","6")
+
+    sd_mult_partial <- coef(vs, unconstrained = FALSE)
+
+    sd_mult <- setNames(rep(1, length(seg_levels)), seg_levels)
+    sd_mult[names(sd_mult_partial)] <- as.numeric(sd_mult_partial)
     tibble::tibble(
       lat = lat,
       lon = lon,
@@ -175,6 +180,8 @@ summarize_gls_folder <- function(folder, n_cores = 1L) {
       r_squared = r_squared,
       adj_r_squared = adj_r_squared,
       coefs = list(coef_tbl),
+      vcov_beta = list(mod$varBeta),
+      var_sd_mult = list(sd_mult),
       GRSS = GRSS,
       GTSS = GTSS,
       n = n,

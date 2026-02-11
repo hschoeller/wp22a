@@ -4,10 +4,11 @@ source("RScripts/algo_functions.r")
 
 
 args <- commandArgs(trailingOnly = TRUE)
-CHUNK_DIR <- paste0(args[1], "zg_chunks/")
+CHUNK_DIR <- args[1]
 CHUNK_NO <- as.integer(args[2]) +1
 OUT_DIR <- paste0(args[1], "mods/")
-
+dir.create(OUT_DIR, showWarnings = FALSE, recursive = TRUE)
+dir.create(paste0(OUT_DIR, "logs/"), showWarnings = FALSE, recursive = TRUE)
 # Change points
 # Convert to Date objects for easier comparison
 change_points <- as.Date(paste0(CP, "-01"), format = "%Y-%m-%d")
@@ -141,10 +142,10 @@ process_wrapper <- function(chunk_idx) # , grid_points, lat_data, lon_data, z_da
                 lat_data[lat_idx], "_", lon_data[lon_idx], ".Rds"
             )
 
-            if (file.exists(file_path)) {
-                print("File exists")
-                next
-            }
+            # if (file.exists(file_path)) {
+            #     print("File exists")
+            #     next
+            # }
             process_grid_point(
                 lat_data[lat_idx], lon_data[lon_idx],
                 z_data[lon_idx, lat_idx, ], time, change_points, smooth_mod

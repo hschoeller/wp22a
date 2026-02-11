@@ -3,11 +3,11 @@
 #SBATCH --job-name=ObsVar
 #SBATCH --output=./logs/ObsVar_%a.out
 #SBATCH --error=./logs/ObsVar_%a.err
-#SBATCH --array=0-512
+#SBATCH --array=499-2652%300
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
 #SBATCH --partition=agpfahl
-#SBATCH --mem=8G
+#SBATCH --mem=9G
 #SBATCH --qos=agpfahl
 #SBATCH --time=14-00:00:00
 
@@ -30,5 +30,7 @@ conda activate wp22aR
 #     sleep 60
 # done &
 
+Rscript /home/schoelleh96/wp22a/RScripts/ObsVar.r \
+    /scratch/schoelleh96/wp22a/ens_data/z_chunks/ ${SLURM_ARRAY_TASK_ID}
 Rscript /home/schoelleh96/wp22a/RScripts/add_model_data.r \
-    /scratch/schoelleh96/wp22a/ens_data/ ${SLURM_ARRAY_TASK_ID}
+    /scratch/schoelleh96/wp22a/ens_data/z_chunks/ ${SLURM_ARRAY_TASK_ID}

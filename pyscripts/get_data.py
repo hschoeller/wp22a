@@ -52,6 +52,12 @@ def parse_arguments():
         help="Ensemble Spread of Analysis?"
     )
     parser.add_argument(
+        "variable_short_name",
+        nargs='?',  # Make optional for backwards compatibility
+        type=str,
+        help="Short variable name in ERA5"
+    )
+    parser.add_argument(
         "d_path",
         nargs='?',  # Make optional for backwards compatibility
         type=str,
@@ -87,7 +93,8 @@ def main():
     )
     print(f"grib_file: {grib_file}")
     du.convert_grib_to_nc(d_path_full, grib_file, cleanup=True)
-
+    if args.ens.lower() == 'true':
+        du.calc_ens_spread(d_path_full, var_name, args.variable_short_name)
 
 if __name__ == "__main__":
     main()
