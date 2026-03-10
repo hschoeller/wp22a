@@ -41,6 +41,16 @@ THEME_PUB_LARGE <- theme_minimal(base_size = 16) +
         legend.box.margin = margin(t = 0, r = 0, b = 0, l = 0)
     )
 
+COASTLINES <- ne_countries(scale = "medium", returnclass = "sf") %>%
+    st_transform(CRS)
+
+GRATICULE <- st_graticule(
+    lat = GRAT_LAT,
+    lon = GRAT_LON,
+    crs = 4326
+) %>%
+    st_transform(CRS)
+
 get_continuous_scale <- function(clims = NULL) {
     if (is.null(clims)) {
         return(scale_fill_scico(palette = CONT_SEQ_SCALE))
@@ -120,20 +130,23 @@ plot_heatmap <- function(heatmap_data,
 plot_spatial <- function(data, var_name, legend_name = "",
                          sig_name = NULL, title = "", alpha = ALPHA,
                          clims = NULL, show_graticule_labels = TRUE,
-                         colorbar_ticks = 2, use_diverging = FALSE) {
+                         colorbar_ticks = 2, use_diverging = FALSE,
+                         grid = NULL) {
     # First, create a complete grid
-    grid_wgs84 <- st_bbox(c(
-        xmin = min(data$lon),
-        ymin = min(data$lat),
-        xmax = max(data$lon),
-        ymax = max(data$lat)
-    ), crs = 4326) %>%
-        st_make_grid(
-            n = c(length(unique(data$lon)), length(unique(data$lat))),
-            what = "polygons"
-        ) %>%
-        st_sf() %>%
-        mutate(id = row_number())
+    if (is.null(grid)) {
+        grid_wgs84 <- st_bbox(c(
+            xmin = min(data$lon),
+            ymin = min(data$lat),
+            xmax = max(data$lon),
+            ymax = max(data$lat)
+        ), crs = 4326) %>%
+            st_make_grid(
+                n = c(length(unique(data$lon)), length(unique(data$lat))),
+                what = "polygons"
+            ) %>%
+            st_sf() %>%
+            mutate(id = row_number())
+    }
 
     # Convert data points to SF
     data_sf <- st_as_sf(data, coords = c("lon", "lat"), crs = 4326)
@@ -204,7 +217,7 @@ plot_spatial <- function(data, var_name, legend_name = "",
     # First ensure your data has the variable with proper name
     names(grid_proj)[names(grid_proj) == var_name] <- "value"
 
-    resolution_factor <- 8
+    resolution_factor <- 4
     grid_rast <- stars::st_rasterize(
         grid_proj["value"], # Use the column we need
         nx = length(unique(data$lon)) * resolution_factor,
@@ -218,17 +231,6 @@ plot_spatial <- function(data, var_name, legend_name = "",
     # You can then remove NA cells if you wish:
     grid_rast_df <- grid_rast_df %>% filter(!is.na(value))
 
-    # Prepare map elements
-    coastlines <- ne_countries(scale = "medium", returnclass = "sf") %>%
-        st_transform(CRS)
-
-    graticule <- st_graticule(
-        lat = GRAT_LAT,
-        lon = GRAT_LON,
-        crs = 4326
-    ) %>%
-        st_transform(CRS)
-
     # Create plot
     p <- ggplot() +
         geom_raster(
@@ -236,11 +238,11 @@ plot_spatial <- function(data, var_name, legend_name = "",
             interpolate = TRUE
         ) +
         geom_sf(
-            data = graticule,
+            data = GRATICULE,
             color = "gray60", linewidth = 0.2, alpha = .5
         ) +
         geom_sf(
-            data = coastlines, fill = NA,
+            data = COASTLINES, fill = NA,
             color = "grey30", linewidth = 0.15, alpha = .5
         ) +
         coord_sf(
@@ -303,7 +305,7 @@ plot_spatial <- function(data, var_name, legend_name = "",
 
 add_contour <- function(
     plot_obj, data, contour_var, alpha = ALPHA, CRS,
-    resolution_factor = 8, contour_binwidth = 750,
+    resolution_factor = 4, contour_binwidth = 750,
     contour_color = "red", contour_alpha = 0.8,
     contour_linewidth = 0.5, contour_linetype = "solid") {
     # Extract coordinate limits from original plot
@@ -374,7 +376,7 @@ plot_change_points <- function(data,
             x = "Year",
             y = TeX("$\\log(\\sigma_{EDA})$"),
             title = title,
-            color = "Break Points"
+            color = "Break points"
         ) +
         scale_x_date(date_breaks = "5 year", date_labels = "%Y") +
         get_categorical_scale()
@@ -531,7 +533,7 @@ grid_and_legend <- function(
             contour_linewidth = 0.4,
             CRS = CRS,
             contour_linetype = "solid",
-            resolution_factor = 16,
+            resolution_factor = 4,
             contour_binwidth = 9807 # every 100 gpdm
         )
         i <- i + 1
@@ -998,107 +1000,35 @@ plot_multiple_grid_lines_monthly_inset <- function(df_obj,
         )
 }
 
-plot_spectral_power_obs_and_resid <- function(df_obj,
-                                              detrend = TRUE,
-                                              taper = 0.1,
-                                              smooth_span = NULL,
-                                              min_period_days = 2) {
+plot_spectral_power_obs_and_resid <- function(spec_df) {
     base_palette <- c(
         "#E69F00", "#56B4E9", "#009E73", "#999999",
         "#CC79A7", "#F0E442", "#0072B2", "#D55E00"
     )
 
-    grids <- paste(df_obj$lat, df_obj$lon, sep = "_")
-    n_grids <- length(grids)
-
-    if (n_grids > length(base_palette)) {
-        base_palette <- grDevices::colorRampPalette(base_palette)(n_grids)
+    grids <- sort(unique(spec_df$grid))
+    if (length(grids) > length(base_palette)) {
+        cols <- grDevices::colorRampPalette(base_palette)(length(grids))
     } else {
-        base_palette <- base_palette[seq_len(n_grids)]
+        cols <- base_palette[seq_along(grids)]
     }
+    pal <- stats::setNames(cols, grids)
 
-    pal <- setNames(base_palette, grids)
-
-    spec_list <- lapply(seq_len(nrow(df_obj)), function(i) {
-        g <- grids[i]
-        shape_val <- df_obj$marker_shape[i]
-
-        dat <- df_obj$obj[[i]] %>%
-            dplyr::transmute(
-                date = date,
-                obs = obs_log,
-                resid = obs_log - fit_log
-            ) %>%
-            dplyr::arrange(date)
-
-        full_dates <- seq(min(dat$date), max(dat$date), by = "1 day")
-        dat_full <- tibble::tibble(date = full_dates) %>%
-            dplyr::left_join(dat, by = "date")
-
-        mk_spec <- function(x) {
-            x <- x[is.finite(x)]
-            sp <- stats::spec.pgram(
-                x,
-                taper = taper,
-                detrend = detrend,
-                demean = TRUE,
-                log = "no",
-                plot = FALSE,
-                spans = smooth_span
-            )
-            tibble::tibble(
-                freq = sp$freq,
-                period_days = 1 / sp$freq,
-                power = sp$spec
-            )
-        }
-
-        s_obs <- mk_spec(dat_full$obs) %>% dplyr::mutate(series = "Observations")
-        s_resid <- mk_spec(dat_full$resid) %>% dplyr::mutate(series = "Residuals")
-
-        dplyr::bind_rows(s_obs, s_resid) %>%
-            dplyr::mutate(
-                grid = g,
-                marker_shape = shape_val
-            )
-    })
-
-    spec_df <- dplyr::bind_rows(spec_list) %>%
-        dplyr::filter(
-            is.finite(period_days),
-            is.finite(power),
-            period_days >= min_period_days
-        )
-
-    # ---- Right-end marker positions ----
     end_pts <- spec_df %>%
         dplyr::group_by(grid, series) %>%
         dplyr::slice_max(period_days, n = 1, with_ties = FALSE) %>%
         dplyr::ungroup()
 
-    # ---- Natural time unit breaks ----
     x_breaks <- c(1, 7, 30, 365, 3650)
     x_labels <- c("Day", "Week", "Month", "Year", "Decade")
-    month_lines <- (1:12) * 30.4375 # avg days per month
-    year_lines <- (1:10) * 365.25 # incl leap years approx
-    vlines <- c(month_lines, year_lines)
+    vlines <- c((1:12) * 30.4375, (1:10) * 365.25)
+
     ggplot2::ggplot(
         spec_df,
-        ggplot2::aes(
-            x = period_days,
-            y = power,
-            color = grid,
-            linetype = series
-        )
+        ggplot2::aes(x = period_days, y = power, color = grid, linetype = series)
     ) +
-        ggplot2::geom_vline(
-            xintercept = vlines,
-            linewidth = 0.25,
-            alpha = 0.1
-        ) +
-        ggplot2::geom_line(linewidth = 0.35, alpha = 0.95) +
-
-        # Right-end markers
+        ggplot2::geom_vline(xintercept = vlines, linewidth = 0.25, alpha = 0.1) +
+        ggplot2::geom_line(linewidth = 0.35, alpha = 0.75) +
         ggplot2::geom_point(
             data = end_pts,
             ggplot2::aes(x = period_days, y = power, shape = marker_shape),
@@ -1111,28 +1041,20 @@ plot_spectral_power_obs_and_resid <- function(df_obj,
         ) +
         ggplot2::scale_color_manual(values = pal, name = NULL) +
         ggplot2::scale_linetype_manual(
-            values = c(
-                Residuals = "solid",
-                Observations = "dashed"
-            ),
+            values = c(Residuals = "solid", Assimilated = "dashed"),
             name = NULL
         ) +
         ggplot2::scale_shape_identity() +
-        ggplot2::scale_x_log10(
-            breaks = x_breaks,
-            labels = x_labels
-        ) +
+        ggplot2::scale_x_log10(breaks = x_breaks, labels = x_labels) +
         ggplot2::scale_y_log10() +
-        ggplot2::labs(
-            x = "Time scale",
-            y = TeX("Power Spectral Density")
-        ) +
+        ggplot2::labs(x = "Time scale", y = TeX("Power Spectral Density")) +
         THEME_PUB +
         ggplot2::theme(
             legend.position = c(0.02, 0.98),
-            legend.justification = c(0, 1), # anchor legend's top-left corner
-            legend.background = element_rect(fill = "white", color = NA),
-            legend.key = element_blank(), axis.text.x = ggplot2::element_text(vjust = 0.5)
+            legend.justification = c(0, 1),
+            legend.background = ggplot2::element_rect(fill = "white", color = NA),
+            legend.key = ggplot2::element_blank(),
+            axis.text.x = ggplot2::element_text(vjust = 0.5)
         ) +
         ggplot2::guides(color = "none")
 }

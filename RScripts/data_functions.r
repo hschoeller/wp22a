@@ -1370,6 +1370,10 @@ make_design_data <- function(time, z, cps) {
             doy = as.integer(format(time, "%j")),
             sin_doy = sin(2 * pi * doy / 365),
             cos_doy = cos(2 * pi * doy / 365),
+            sin2_doy = sin(4 * pi * doy / 365),
+            cos2_doy = cos(4 * pi * doy / 365),
+            sin3_doy = sin(6 * pi * doy / 365),
+            cos3_doy = cos(6 * pi * doy / 365),
             log_variance = log(z),
             segment = cut(as.Date(time),
                 breaks = c(as.Date(c(time[1], cps, time[length(time)]))),
@@ -1387,7 +1391,8 @@ make_design_data <- function(time, z, cps) {
 }
 
 daily_fit_ci <- function(daily_df, beta, V_beta, level = 0.95) {
-    form <- log_variance ~ segment + segment:year + segment:sin_doy + segment:cos_doy - 1
+    form <- (log_variance ~ segment + segment:year + segment:sin_doy + segment:cos_doy +
+        segment:sin2_doy + segment:cos2_doy + segment:sin3_doy + segment:cos3_doy - 1)
     X <- model.matrix(form, data = daily_df)
 
     # align to beta names
@@ -1414,7 +1419,8 @@ daily_fit_ci <- function(daily_df, beta, V_beta, level = 0.95) {
 
 
 monthly_fit_ci <- function(daily_df, beta, V_beta, level = 0.95) {
-    form <- log_variance ~ segment + segment:year + segment:sin_doy + segment:cos_doy - 1
+    form <- (log_variance ~ segment + segment:year + segment:sin_doy + segment:cos_doy +
+        segment:sin2_doy + segment:cos2_doy + segment:sin3_doy + segment:cos3_doy - 1)
     X <- model.matrix(form, data = daily_df)
 
     # align to beta names
@@ -1528,4 +1534,61 @@ build_monthly_obs_fit_object <- function(nc_path, minmax, nc_var,
         marker_shape = minmax$marker_shape,
         obj = out
     )
+}
+
+
+calc_spectral_power_obs_and_resid <- function(df_obj,
+                                              detrend = TRUE,
+                                              taper = 0.1,
+                                              smooth_span = NULL,
+                                              min_period_days = 2) {
+    grids <- paste(df_obj$lat, df_obj$lon, sep = "_")
+
+    mk_spec <- function(x) {
+        x <- x[is.finite(x)]
+        sp <- stats::spec.pgram(
+            x,
+            taper   = taper,
+            detrend = detrend,
+            demean  = TRUE,
+            log     = "no",
+            plot    = FALSE,
+            spans   = smooth_span
+        )
+        tibble::tibble(
+            freq        = sp$freq,
+            period_days = 1 / sp$freq,
+            power       = sp$spec
+        )
+    }
+
+    spec_list <- lapply(seq_len(nrow(df_obj)), function(i) {
+        dat <- df_obj$obj[[i]] %>%
+            dplyr::transmute(
+                date  = date,
+                obs   = obs_log,
+                resid = obs_log - fit_log
+            ) %>%
+            dplyr::arrange(date)
+
+        full_dates <- seq(min(dat$date), max(dat$date), by = "1 day")
+        dat_full <- tibble::tibble(date = full_dates) %>%
+            dplyr::left_join(dat, by = "date")
+
+        s_obs <- mk_spec(dat_full$obs) %>% dplyr::mutate(series = "Assimilated")
+        s_resid <- mk_spec(dat_full$resid) %>% dplyr::mutate(series = "Residuals")
+
+        dplyr::bind_rows(s_obs, s_resid) %>%
+            dplyr::mutate(
+                grid         = grids[i],
+                marker_shape = df_obj$marker_shape[i]
+            )
+    })
+
+    dplyr::bind_rows(spec_list) %>%
+        dplyr::filter(
+            is.finite(period_days),
+            is.finite(power),
+            period_days >= min_period_days
+        )
 }
