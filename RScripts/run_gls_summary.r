@@ -7,14 +7,28 @@ source("RScripts/config.r")
 source("RScripts/data_functions.r")
 source("RScripts/algo_functions.r")
 
-LM_DIR <- "/scratch/schoelleh96/wp22a/ens_data/z_chunks/mods/"
-# OUT_FILE <- file.path(LM_DIR, "gls_model_summary.rds")
-OUT_FILE <- "/home/schoelleh96/wp22a/gls_model_summary.rds"
+args <- commandArgs(trailingOnly = TRUE)
+CHUNK_DIR <- args[1]
+SEAS <- as.logical(args[2])
+WRS  <- as.logical(args[3])
+
+LM_DIR <- paste0(args[1], "mods")
+OUT_FILE <- file.path("/home/schoelleh96/wp22a/", "gls_model_summary")
+if (SEAS) {
+    LM_DIR <- paste0(LM_DIR, "Seas")
+    OUT_FILE <- paste0(OUT_FILE, "Seas")
+}
+if (WRS) {
+    LM_DIR <- paste0(LM_DIR, "WR")
+    wr_min <- readRDS("/home/schoelleh96/wp22a/data/wrnames.rds")
+    wr_min$date <- as.Date(wr_min$date)
+    OUT_FILE <- paste0(OUT_FILE, "WR")
+}
+OUT_FILE <- paste0(OUT_FILE, ".Rds")
+
+
 # number of parallel workers (can be overridden by env var)
 N_CORES <- as.integer(Sys.getenv("SLURM_CPUS_PER_TASK", unset = parallel::detectCores()))
-
-## required globals (must exist)
-YEAR_BOUND <- c(1940, 2024)
 
 ## -----------------------------
 ## summarize_gls_folder
@@ -76,9 +90,16 @@ summarize_gls_folder <- function(folder, n_cores = 1L) {
     adj_r_squared <- 1 - ((RSS / (n - p)) / (TSS / (n - 1)))
 
     fit_vals <- numeric(2)
-    for (i in seq_along(YEAR_BOUND)) {
-      fit_vals[i] <- mean(predict(mod, newdata = dat[dat$year == YEAR_BOUND[i], ]), na.rm = TRUE)
+    if (WRS){
+    for (i in seq_along(YEAR_BOUND_WR)) {
+      fit_vals[i] <- mean(predict(mod, newdata = dat[dat$year == YEAR_BOUND_WR[i], ]), na.rm = TRUE)
     }
+    } else {
+      for (i in seq_along(YEAR_BOUND)) {
+        fit_vals[i] <- mean(predict(mod, newdata = dat[dat$year == YEAR_BOUND[i], ]), na.rm = TRUE)
+      }
+    }
+
 
     s <- summary(mod)
     coef_tbl <- as.data.frame(s$tTable)
@@ -198,7 +219,6 @@ summarize_gls_folder <- function(folder, n_cores = 1L) {
     worker,
     mc.cores = n_cores
   )
-
   dplyr::bind_rows(rows)
 }
 

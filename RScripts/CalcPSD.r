@@ -21,7 +21,7 @@ OUT_PATH_CSV <- file.path(OUT_DIR, "psd_summary_1000bins.csv")
 # -------------------------
 # Load coeff tibble -> beta_wide
 # -------------------------
-COEFF_RDS <- "/home/schoelleh96/wp22a/gls_model_summary.rds"
+COEFF_RDS <- "/home/schoelleh96/wp22a/gls_model_summarySeas.Rds"
 coeff_tbl <- readRDS(COEFF_RDS) %>%
   dplyr::select(lat, lon, coefs)
 
@@ -75,7 +75,8 @@ ncdf4::nc_close(nc0)
 # Build design matrix X once (uses your make_design_data)
 # make_design_data expects time, z, cps and creates segment/year/sin/cos etc.
 tmp_df <- make_design_data(time = dates, z = rep(1, ntime), cps = change_points)
-form <- log_variance ~ segment + segment:year + segment:sin_doy + segment:cos_doy - 1
+form <- (log_variance ~ segment + segment:year + segment:sin_doy + segment:cos_doy +
+        segment:sin2_doy + segment:cos2_doy + segment:sin3_doy + segment:cos3_doy - 1)
 X <- model.matrix(form, data = tmp_df)
 
 # align X columns to all_terms
@@ -103,10 +104,24 @@ compute_binned_psd <- function(x, bin_id, n_bins) {
   n <- length(x)
   if (n < 512) return(rep(NA_real_, n_bins))
 
-  x <- x - mean(x)
+  t <- seq_len(n)
+x <- stats::residuals(stats::lm(x ~ t))
 
-  Xf <- fft(x)
-  P  <- (Mod(Xf)^2) / n
+# --- ADD: split cosine-bell taper (spec.pgram taper=0.05) ---
+p <- 0.05
+m <- floor(p * n)
+w <- rep(1, n)
+if (m > 0) {
+  k <- seq_len(m)
+  taper_end <- 0.5 * (1 - cos(pi * k / m))
+  w[k] <- taper_end
+  w[(n - m + 1):n] <- rev(taper_end)
+}
+x <- x * w
+
+# --- MODIFY: periodogram normalization (window energy) ---
+Xf <- fft(x)
+P  <- (Mod(Xf)^2) / sum(w^2)
   P  <- P[2:(floor(n / 2) + 1)]   # positive freqs, drop DC
 
   s   <- rowsum(P, group = bin_id, reorder = FALSE)
@@ -146,14 +161,14 @@ process_chunk <- function(f) {
   } else {
     stop("Unsupported dim(z) in ", f, ": ", paste(d, collapse = "x"))
   }
-
+  w_lat <- cos(lat_rep * pi / 180)
   keys <- paste(lat_rep, lon_rep)
   have <- keys %in% rownames(beta_mat)
   if (!any(have)) return(NULL)
 
   keys_use <- keys[have]
   z_mat <- z_mat[have, , drop = FALSE]
-
+w_use <- w_lat[have]
   # obs/resid in time x points
   obs_mat <- log(z_mat)
   obs_mat[!is.finite(obs_mat)] <- NA_real_
@@ -172,7 +187,7 @@ process_chunk <- function(f) {
     psd_res[, j] <- compute_binned_psd(res_tp[, j], bin_id, n_freq_target)
   }
 
-  list(psd_obs = psd_obs, psd_res = psd_res)
+  list(psd_obs = psd_obs, psd_res = psd_res, w = w_use)
 }
 
 # -------------------------
@@ -186,14 +201,33 @@ res_chunks <- parallel::mclapply(chunk_files, process_chunk, mc.cores = N_CHUNK_
 # filter NULLs
 res_chunks <- Filter(Negate(is.null), res_chunks)
 if (length(res_chunks) == 0) stop("All chunks returned NULL (no matching betas?)")
-
+message("Processed ", length(res_chunks), " chunks with matching betas")
 PSD_obs_all <- do.call(cbind, lapply(res_chunks, `[[`, "psd_obs"))
 PSD_res_all <- do.call(cbind, lapply(res_chunks, `[[`, "psd_res"))
+w_all <- unlist(lapply(res_chunks, `[[`, "w"))
 
-mean_obs <- rowMeans(PSD_obs_all, na.rm = TRUE)
-iqr_obs  <- apply(PSD_obs_all, 1, IQR, na.rm = TRUE)
-mean_res <- rowMeans(PSD_res_all, na.rm = TRUE)
-iqr_res  <- apply(PSD_res_all, 1, IQR, na.rm = TRUE)
+w_mean <- function(x, w) {
+  ok <- is.finite(x) & is.finite(w) & (w > 0)
+  if (!any(ok)) return(NA_real_)
+  sum(w[ok] * x[ok]) / sum(w[ok])
+}
+
+w_quantile <- function(x, w, probs) {
+  ok <- is.finite(x) & is.finite(w) & (w > 0)
+  if (!any(ok)) return(rep(NA_real_, length(probs)))
+  o <- order(x[ok])
+  x <- x[ok][o]; w <- w[ok][o]
+  cw <- cumsum(w) / sum(w)
+  sapply(probs, function(p) x[which(cw >= p)[1]])
+}
+
+mean_obs <- apply(PSD_obs_all, 1, w_mean, w = w_all)
+q_obs    <- t(apply(PSD_obs_all, 1, w_quantile, w = w_all, probs = c(0.25, 0.75)))
+iqr_obs  <- q_obs[, 2] - q_obs[, 1]
+
+mean_res <- apply(PSD_res_all, 1, w_mean, w = w_all)
+q_res    <- t(apply(PSD_res_all, 1, w_quantile, w = w_all, probs = c(0.25, 0.75)))
+iqr_res  <- q_res[, 2] - q_res[, 1]
 
 out_df <- tibble::tibble(
   freq_mid = freq_mid,

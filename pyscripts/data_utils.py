@@ -74,7 +74,7 @@ def retrieve_era5(
 
     if pressure_level is not None:
         request["pressure_level"] = [str(pressure_level)]
-
+    print(request)
     c.retrieve(dataset, request, d_path + f_name)
 
     # Unzip the downloaded file
@@ -82,7 +82,7 @@ def retrieve_era5(
         member = next((m for m in z.namelist() if m.endswith("data.grib")), None)
         if member is None:
             raise FileNotFoundError(f"'data.grib' not found in {f_name}: {z.namelist()}")
-        with z.open(member) as src, open(os.path.join(d_path, f"{var}.grib"), "wb") as dst:
+        with z.open(member) as src, open(os.path.join(d_path, f"{var}{pressure_level}.grib"), "wb") as dst:
             shutil.copyfileobj(src, dst)
     os.remove(f"{d_path}/{f_name}")
 
@@ -94,7 +94,7 @@ def retrieve_era5(
     #         os.remove(target_file)
     #     os.rename(extracted_file, target_file)
     # os.remove(f"{d_path}/{f_name}")
-    return f"{var}.grib"
+    return f"{var}{pressure_level}.grib"
 
 
 def convert_grib_to_nc(d_path, grib_name, cleanup=True):

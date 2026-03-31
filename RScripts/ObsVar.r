@@ -6,15 +6,34 @@ source("RScripts/algo_functions.r")
 args <- commandArgs(trailingOnly = TRUE)
 CHUNK_DIR <- args[1]
 CHUNK_NO <- as.integer(args[2]) +1
-OUT_DIR <- paste0(args[1], "mods/")
+SEAS <- as.logical(args[3])
+WRS  <- as.logical(args[4])
+CP_NO_SEAS <- c("1948-09", "1957-08", "1979-03", "1998-08", "2009-01")
+
+OUT_DIR <- paste0(CHUNK_DIR, "mods")
+if (SEAS) {
+    OUT_DIR <- paste0(OUT_DIR, "Seas")
+    change_points <- as.Date(paste0(CP, "-01"), format = "%Y-%m-%d")
+
+} else {
+  change_points <- as.Date(paste0(CP_NO_SEAS, "-01"), format = "%Y-%m-%d")
+
+}
+if (WRS) {
+    OUT_DIR <- paste0(OUT_DIR, "WR")
+    wr_min <- readRDS("/home/schoelleh96/wp22a/data/wrnames.rds")
+    wr_min$date <- as.Date(wr_min$date)
+} else {
+    wr_min = NULL
+}
+
 dir.create(OUT_DIR, showWarnings = FALSE, recursive = TRUE)
-dir.create(paste0(OUT_DIR, "logs/"), showWarnings = FALSE, recursive = TRUE)
+dir.create(paste0(OUT_DIR, "/logs/"), showWarnings = FALSE, recursive = TRUE)
 # Change points
 # Convert to Date objects for easier comparison
-change_points <- as.Date(paste0(CP, "-01"), format = "%Y-%m-%d")
 
 # grid-point-wise function
-process_grid_point <- function(lat, lon, z, time, cps, smooth_mod) {
+process_grid_point <- function(lat, lon, z, time, cps, wrs) {
     print("pull data together")
 
     z_df <- data.frame(time = time, z = z)
@@ -25,6 +44,19 @@ process_grid_point <- function(lat, lon, z, time, cps, smooth_mod) {
 
     z_df$sin_doy <- sin(2 * pi * z_df$doy / 365)
     z_df$cos_doy <- cos(2 * pi * z_df$doy / 365)
+    if (SEAS){
+        z_df$sin2_doy <- sin(4 * pi * z_df$doy / 365)
+        z_df$cos2_doy <- cos(4 * pi * z_df$doy / 365)
+        z_df$sin3_doy <- sin(6 * pi * z_df$doy / 365)
+        z_df$cos3_doy <- cos(6 * pi * z_df$doy / 365)
+    }
+    if (WRS) {
+        z_df <- dplyr::inner_join(
+            z_df,
+            wrs,
+            by = c("time" = "date")
+        )
+    }
     z_df$log_variance <- log(z_df$z)
 
 
@@ -43,44 +75,51 @@ process_grid_point <- function(lat, lon, z, time, cps, smooth_mod) {
         mutate(day_no = row_number()) %>%
         ungroup()
 
-    if (smooth_mod) {
-        print("Estimate smooth model")
-        # Estimate smooth model
-        lmod_seas_smooth <- gamm(
-            log_variance ~
-                s(doy, by = segment, bs = "cc") +
-                s(year, by = segment, bs = "cr") +
-                ti(year, doy, by = segment, bs = c("cr", "cc")),
-            data = z_df,
-            method = "REML",
-            correlation = corAR1(form = ~ day_no | segment),
-            weights = varIdent(form = ~ 1 | segment),
-            keepData = FALSE
-        )
-        print("Saving smooth model")
-        saveRDS(lmod_seas_smooth, file = paste0(
-            OUT_DIR, "slm", lat, "_", lon,
-            ".Rds"
-        ))
-        print("Smooth model saved")
-    } else {
-        print("Estimate linear model")
-        lmod_seas <- nlme::gls(
-            log_variance ~ segment +
-                segment:year + segment:sin_doy + segment:cos_doy - 1,
-            data = z_df,
-            correlation = corAR1(form = ~ day_no | segment),
-            weights = varIdent(form = ~ 1 | segment)
-        )
-        print("Saving linear model")
-        saveRDS(lmod_seas, file = paste0(
-            OUT_DIR, "lm", lat, "_", lon,
-            ".Rds"
-        ))
+    print("Estimate linear model")
+    rhs <- c(
+    "segment",
+    "segment:year",
+    "segment:sin_doy + segment:cos_doy"
+    )
 
-        print("Linear model saved")
+    # add seasonal harmonics 2 and 3 only if SEAS flag is TRUE
+    if (SEAS) {
+    rhs <- c(rhs,
+            "segment:sin2_doy + segment:cos2_doy",
+            "segment:sin3_doy + segment:cos3_doy")
     }
-    print("Done")
+
+    # add WR predictor only if WRS flag is TRUE
+    if (WRS) {
+        rhs <- c(rhs, "wrname")   # or "segment:wrname" if you want regime effects by segment
+    }
+
+    fml <- as.formula(
+        paste0("log_variance ~ ", paste(rhs, collapse = " + ")) # , " - 1")
+    )
+
+    lmod_seas <- nlme::gls(
+        fml,
+        data = z_df,
+        correlation = corAR1(form = ~ day_no | segment),
+        weights = varIdent(form = ~ 1 | segment),
+          control = glsControl(
+    maxIter = 500,
+    msMaxIter = 500,
+    tolerance = 1e-5,
+    msTol = 1e-5,
+    msVerbose = TRUE
+  )
+    )
+    lmod_seas$data <- z_df
+    print("Saving linear model")
+    saveRDS(lmod_seas, file = paste0(
+        OUT_DIR, "/lm", lat, "_", lon,
+        ".Rds"
+    ))
+
+    print("Linear model saved")
+
 }
 
 # Define the wrapper for parallel execution
@@ -88,8 +127,8 @@ process_wrapper <- function(chunk_idx) # , grid_points, lat_data, lon_data, z_da
 # time_data, change_points)
 {
     # redirect output into separate files
-    output_file <- paste0(OUT_DIR, "logs/output_process_", chunk_idx, ".log")
-    error_file <- paste0(OUT_DIR, "logs/error_process_", chunk_idx, ".log")
+    output_file <- paste0(OUT_DIR, "/logs/output_process_", chunk_idx, ".log")
+    error_file <- paste0(OUT_DIR, "/logs/error_process_", chunk_idx, ".log")
     output_con <- file(output_file, open = "wt")
     error_con <- file(error_file, open = "wt")
     # Redirect standard output and standard error
@@ -125,10 +164,16 @@ process_wrapper <- function(chunk_idx) # , grid_points, lat_data, lon_data, z_da
         ncatt_get(nc_file, "valid_time", "units")$value
     )
     time <- as.Date(as.POSIXct(time_data, origin = time_origin, tz = "UTC"))
+    if (WRS) {
+    years <- as.integer(format(time, "%Y"))
+    year_idx <- which(years >= YEAR_BOUND_WR[1] & years <= YEAR_BOUND_WR[2])
 
+    time <- time[year_idx]
+    z_data <- z_data[, , year_idx, drop = FALSE]
+    }
     nc_close(nc_file)
     print("Data read")
-    for (smooth_mod in c(FALSE)) { # }, TRUE)) {
+    
         for (i in seq_len(nrow(grid_points))) {
             lon_idx <- grid_points[i, 1]
             lat_idx <- grid_points[i, 2]
@@ -138,7 +183,7 @@ process_wrapper <- function(chunk_idx) # , grid_points, lat_data, lon_data, z_da
                 ", Lon: ", lon_data[lon_idx]
             ))
             file_path <- paste0(
-                OUT_DIR, if (smooth_mod) "slm" else "lm",
+                OUT_DIR, "/lm",
                 lat_data[lat_idx], "_", lon_data[lon_idx], ".Rds"
             )
 
@@ -148,28 +193,10 @@ process_wrapper <- function(chunk_idx) # , grid_points, lat_data, lon_data, z_da
             # }
             process_grid_point(
                 lat_data[lat_idx], lon_data[lon_idx],
-                z_data[lon_idx, lat_idx, ], time, change_points, smooth_mod
+                z_data[lon_idx, lat_idx, ], time, change_points, wr_min
             )
         }
-    }
+    
 }
 
-
-# Sys.setenv(OMP_NUM_THREADS = "1")
-# Sys.setenv(MKL_NUM_THREADS = "1")
-# Sys.setenv(OPENBLAS_NUM_THREADS = "1")
-# Sys.setenv(BLIS_NUM_THREADS = "1")
-# Sys.setenv(NUMEXPR_NUM_THREADS = "1")
-# Sys.setenv(R_THREADS = "1")
-
 process_wrapper(CHUNK_NO)
-
-# num_chunks <- 48
-# num_cores <- 48
-# mclapply(1:num_chunks, process_wrapper, mc.cores = num_cores)
-
-# parallelization didnt work bc of oom errors
-
-# for (i in seq_len(nrow(grid_points))) {
-#     process_wrapper(i)
-# }

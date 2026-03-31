@@ -63,6 +63,12 @@ def parse_arguments():
         type=str,
         help="Data path"
     )
+    parser.add_argument(
+        "plev",
+        nargs='?',  # Make optional for backwards compatibility
+        type=str,
+        help="pressure level"
+    )
 
     return parser.parse_args()
 
@@ -78,6 +84,12 @@ def main():
     years = [f'{y}' for y in range(year_min, year_max + 1)]
     print(
         f"Downloading {var_name} from {args.dataset} ({args.product_type}) to {d_path_full}")
+    if args.dataset == "reanalysis-era5-single-levels":
+        plev = None
+    elif args.plev != None:
+        plev = args.plev
+    else:
+        plev = "500"
     grib_file = du.retrieve_era5(
         years=years,
         lat_min=lat_min,
@@ -85,11 +97,11 @@ def main():
         lon_min=lon_min,
         lon_max=lon_max,
         d_path=d_path_full,
-        f_name=f"{var_name}.zip",
+        f_name=f"{var_name}{plev}.zip",
         var=var_name,
         dataset=args.dataset,
         product_type=args.product_type,
-        pressure_level=None if args.dataset == "reanalysis-era5-single-levels" else "500"
+        pressure_level=plev
     )
     print(f"grib_file: {grib_file}")
     du.convert_grib_to_nc(d_path_full, grib_file, cleanup=True)

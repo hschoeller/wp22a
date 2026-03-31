@@ -2,8 +2,8 @@
 #SBATCH --job-name=psd_mean_iqr
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=128
-#SBATCH --mem=250G
+#SBATCH --cpus-per-task=32
+#SBATCH --mem=100G
 #SBATCH --time=24:00:00
 #SBATCH --output=logs/psd_mean_iqr_%j.out
 #SBATCH --error=logs/psd_mean_iqr_%j.err

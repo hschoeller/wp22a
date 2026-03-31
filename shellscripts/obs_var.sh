@@ -3,11 +3,11 @@
 #SBATCH --job-name=ObsVar
 #SBATCH --output=./logs/ObsVar_%a.out
 #SBATCH --error=./logs/ObsVar_%a.err
-#SBATCH --array=499-2652%300
+#SBATCH --array=1420
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
 #SBATCH --partition=agpfahl
-#SBATCH --mem=9G
+#SBATCH --mem=10G
 #SBATCH --qos=agpfahl
 #SBATCH --time=14-00:00:00
 
@@ -30,7 +30,20 @@ conda activate wp22aR
 #     sleep 60
 # done &
 
-Rscript /home/schoelleh96/wp22a/RScripts/ObsVar.r \
-    /scratch/schoelleh96/wp22a/ens_data/z_chunks/ ${SLURM_ARRAY_TASK_ID}
-Rscript /home/schoelleh96/wp22a/RScripts/add_model_data.r \
-    /scratch/schoelleh96/wp22a/ens_data/z_chunks/ ${SLURM_ARRAY_TASK_ID}
+SEASON=("False") # ("False" "True")
+WR=("True") #  "False")
+
+for SEAS in "${SEASON[@]}"; do
+  for WR_FLAG in "${WR[@]}"; do
+
+    Rscript /home/schoelleh96/wp22a/RScripts/ObsVar.r \
+        /scratch/schoelleh96/wp22a/ens_data/z_chunks/ ${SLURM_ARRAY_TASK_ID} \
+        ${SEAS} ${WR_FLAG}
+
+    # obsolete because ObsVar.r adds model data now
+    # Rscript /home/schoelleh96/wp22a/RScripts/add_model_data.r \
+    #     /scratch/schoelleh96/wp22a/ens_data/z_chunks/ ${SLURM_ARRAY_TASK_ID} \
+    #     ${SEAS} ${WR_FLAG}
+
+  done
+done

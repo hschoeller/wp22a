@@ -123,7 +123,12 @@ def split_nc_file(input_file_path, output_dir, num_chunks):
             lon_end   = int(lon_edges[j + 1])  # exclusive
             if lon_end <= lon_start:
                 continue
-            
+            # if lon_arr[lon_start] == -29:
+            #     print(lat_arr[lat_start])
+            #     print(lat_arr[lat_end])
+            #     print(chunk_id)
+            # chunk_id += 1
+
             subset = ds.isel(latitude = slice(lat_start, lat_end),
                              longitude = slice(lon_start, lon_end))
 

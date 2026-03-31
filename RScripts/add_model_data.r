@@ -6,7 +6,7 @@ source("RScripts/algo_functions.r")
 args <- commandArgs(trailingOnly = TRUE)
 CHUNK_DIR <- args[1]
 CHUNK_NO <- as.integer(args[2]) +1
-OUT_DIR <- paste0(args[1], "mods/")
+OUT_DIR <- paste0(args[1], "modsSeas/")
 
 # convert CP (vector of years or strings) to Date objects like original
 change_points <- as.Date(paste0(CP, "-01"), format = "%Y-%m-%d")
@@ -18,6 +18,10 @@ make_z_df <- function(z_vec, time_vec, cps) {
     z_df$doy <- as.integer(format(z_df$time, "%j"))
     z_df$sin_doy <- sin(2 * pi * z_df$doy / 365)
     z_df$cos_doy <- cos(2 * pi * z_df$doy / 365)
+    z_df$sin2_doy <- sin(4 * pi * z_df$doy / 365)
+    z_df$cos2_doy <- cos(4 * pi * z_df$doy / 365)
+    z_df$sin3_doy <- sin(6 * pi * z_df$doy / 365)
+    z_df$cos3_doy <- cos(6 * pi * z_df$doy / 365)
     z_df$log_variance <- log(z_df$z)
 
     z_df$segment <- cut(as.Date(z_df$time),
@@ -76,7 +80,7 @@ process_grid_point <- function(lat, lon, z, time, cps) {
     if (file.exists(lm_file)) {
         print(paste("Processing file:", lm_file))
         mod <- readRDS(lm_file)
-        has_data <- !is.null(mod$data)
+        has_data <- FALSE #!is.null(mod$data)
         if (!has_data) {
             mod <- attach_data_to_model(mod, z_df)
             saveRDS(mod, file = lm_file)
