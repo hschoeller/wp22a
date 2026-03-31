@@ -1055,7 +1055,7 @@ process_grid_point <- function(
 }
 
 # Top-level function to calculate composite values.
-calculate_composite_values <- function(df, lm_dir, n_perm = 10000, n_cores = 4) {
+calculate_composite_values <- function(df, lm_dir, n_perm = 1000, n_cores = 4) {
     # Ensure df$date is a Date object
     df$date <- as.Date(df$date)
 

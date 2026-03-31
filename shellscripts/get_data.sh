@@ -35,7 +35,10 @@ else
     BASEFOLDER="data"
 fi
 
-python ../pyscripts/get_data.py "${VAR}" "${DATASET}" "${PRODUCT_TYPE}" "${ENS}" \
-    "/net/scratch/schoelleh96/WP2/WP2.2a/"
+# python ../pyscripts/get_data.py "${VAR}" "${DATASET}" "${PRODUCT_TYPE}" "${ENS}" \
+#     "/net/scratch/schoelleh96/WP2/WP2.2a/"
 # python ../pyscripts/splitter.py "/net/scratch/schoelleh96/WP2/WP2.2a/${BASEFOLDER}/${VAR}.nc" \
 #     "/net/scratch/schoelleh96/WP2/WP2.2a/${BASEFOLDER}/${VAR_SHORT}_chunks/" --chunks 1 48 --no-regrid
+
+python ../pyscripts/get_data.py "geopotential" "reanalysis-era5-pressure-levels" \
+    "reanalysis" "False" "z" "/net/scratch/schoelleh96/WP2/WP2.2a/"

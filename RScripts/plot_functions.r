@@ -363,6 +363,421 @@ add_contour <- function(
         )
 }
 
+plot_map <- function(
+    df,
+    var,
+    colorbar_title,
+    sig_name = NULL,
+    use_diverging = FALSE,
+    clims = NULL,
+    resolution_factor = 4) {
+    var <- rlang::ensym(var)
+    var_name <- rlang::as_name(var)
+
+    make_lonlat_crop <- function(lon_bound, lat_bound, n = 1000) {
+        lon_seq <- seq(lon_bound[1], lon_bound[2], length.out = n)
+        lat_seq <- seq(lat_bound[1], lat_bound[2], length.out = n)
+
+        bottom <- cbind(lon_seq, lat_bound[1])
+        right <- cbind(rep(lon_bound[2], n - 2), lat_seq[2:(n - 1)])
+        pole <- matrix(c(0, 90), ncol = 2)
+        left <- cbind(rep(lon_bound[1], n - 2), rev(lat_seq[2:(n - 1)]))
+
+        ring <- rbind(bottom, right, pole, left, bottom[1, ])
+        sf::st_sfc(sf::st_polygon(list(ring)), crs = 4326)
+    }
+
+    sf::sf_use_s2(FALSE)
+
+    crop_ll <- make_lonlat_crop(LON_BOUND, LAT_BOUND)
+
+    coast <- rnaturalearth::ne_countries(scale = "medium", returnclass = "sf") |>
+        sf::st_union() |>
+        sf::st_intersection(crop_ll) |>
+        sf::st_transform(CRS)
+
+    graticule <- sf::st_graticule(
+        lat = GRAT_LAT,
+        lon = GRAT_LON,
+        xlim = c(-180, 180),
+        ylim = c(-90, 90),
+        crs = sf::st_crs(4326)
+    ) |>
+        sf::st_intersection(crop_ll) |>
+        sf::st_transform(CRS)
+
+    if (!is.null(sig_name)) {
+        plot_df <- df |>
+            dplyr::filter(
+                !!rlang::ensym(sig_name) < 0.05,
+                dplyr::between(lon, LON_BOUND[1], LON_BOUND[2]),
+                dplyr::between(lat, LAT_BOUND[1], LAT_BOUND[2])
+            )
+    } else {
+        plot_df <- df |>
+            dplyr::filter(
+                dplyr::between(lon, LON_BOUND[1], LON_BOUND[2]),
+                dplyr::between(lat, LAT_BOUND[1], LAT_BOUND[2])
+            )
+    }
+
+    if (is.null(clims)) {
+        clims <- range(dplyr::pull(plot_df, !!var), na.rm = TRUE)
+    }
+
+    if (is.null(colorbar_title)) {
+        colorbar_title <- var_name
+    }
+
+    # make a regular lon/lat grid as polygons
+    grid_ll <- sf::st_bbox(c(
+        xmin = min(plot_df$lon, na.rm = TRUE),
+        ymin = min(plot_df$lat, na.rm = TRUE),
+        xmax = max(plot_df$lon, na.rm = TRUE),
+        ymax = max(plot_df$lat, na.rm = TRUE)
+    ), crs = sf::st_crs(4326)) |>
+        sf::st_as_sfc() |>
+        sf::st_make_grid(
+            n = c(length(unique(plot_df$lon)), length(unique(plot_df$lat))),
+            what = "polygons"
+        ) |>
+        sf::st_sf() |>
+        dplyr::mutate(id = dplyr::row_number())
+
+    # join points to polygons
+    pts_ll <- sf::st_as_sf(plot_df, coords = c("lon", "lat"), crs = 4326)
+
+    grid_vals <- sf::st_join(grid_ll, pts_ll) |>
+        dplyr::group_by(id) |>
+        dplyr::summarise(value = mean(.data[[var_name]], na.rm = TRUE), .groups = "drop")
+
+    grid_vals <- dplyr::left_join(
+        grid_ll,
+        sf::st_drop_geometry(grid_vals),
+        by = "id"
+    )
+
+    # transform polygons to target projection
+    grid_proj <- sf::st_transform(grid_vals, CRS)
+    bbox_proj <- sf::st_bbox(grid_proj)
+
+    # rasterize projected polygons
+    grid_rast <- stars::st_rasterize(
+        grid_proj["value"],
+        nx = length(unique(plot_df$lon)) * resolution_factor,
+        ny = length(unique(plot_df$lat)) * resolution_factor,
+        bounds = bbox_proj
+    )
+
+    grid_rast_df <- as.data.frame(grid_rast, xy = TRUE) |>
+        dplyr::filter(!is.na(value))
+
+    p <- ggplot2::ggplot() +
+        ggplot2::geom_raster(
+            data = grid_rast_df,
+            ggplot2::aes(x = x, y = y, fill = value),
+            interpolate = TRUE
+        ) +
+        ggplot2::geom_sf(
+            data = graticule,
+            color = "grey60",
+            linewidth = 0.25,
+            linetype = "solid"
+        ) +
+        ggplot2::geom_sf(
+            data = coast,
+            fill = NA,
+            color = "black",
+            linewidth = 0.3
+        ) +
+        ggplot2::coord_sf(
+            crs = CRS,
+            xlim = unname(bbox_proj[c("xmin", "xmax")]),
+            ylim = unname(bbox_proj[c("ymin", "ymax")]),
+            expand = FALSE,
+            clip = "off"
+        )
+
+    if (use_diverging) {
+        p <- p + get_diverging_scale(clims = clims)
+    } else {
+        p <- p + get_continuous_scale(clims = clims)
+    }
+
+    p <- p +
+        ggplot2::labs(fill = latex2exp::TeX(colorbar_title)) +
+        ggplot2::guides(
+            fill = ggplot2::guide_colorbar(
+                title.position = "left",
+                barwidth = grid::unit(5, "lines"),
+                barheight = grid::unit(0.5, "lines")
+            )
+        ) +
+        THEME_PUB +
+        ggplot2::theme(
+            strip.placement = "outside",
+            strip.text = ggplot2::element_text(face = "bold"),
+            legend.position = "bottom",
+            legend.direction = "horizontal",
+            legend.box.margin = ggplot2::margin(0, 0, 0, 0),
+            legend.margin = ggplot2::margin(0, 0, 0, 0),
+            axis.text.x = ggplot2::element_blank(),
+            axis.text.y = ggplot2::element_blank(),
+            axis.title.x = ggplot2::element_blank(),
+            axis.title.y = ggplot2::element_blank()
+        )
+
+    p
+}
+
+
+plot_map_fast <- function(
+    df,
+    var,
+    colorbar_title = NULL,
+    sig_name = NULL,
+    sig_threshold = 0.05,
+    use_diverging = FALSE,
+    clims = NULL,
+    resolution_factor = 4) {
+    var <- rlang::ensym(var)
+    var_name <- rlang::as_name(var)
+
+    make_lonlat_crop <- function(lon_bound, lat_bound, n = 1000) {
+        lon_seq <- seq(lon_bound[1], lon_bound[2], length.out = n)
+        lat_seq <- seq(lat_bound[1], lat_bound[2], length.out = n)
+
+        bottom <- cbind(lon_seq, lat_bound[1])
+        right <- cbind(rep(lon_bound[2], n - 2), lat_seq[2:(n - 1)])
+        pole <- matrix(c(0, 90), ncol = 2)
+        left <- cbind(rep(lon_bound[1], n - 2), rev(lat_seq[2:(n - 1)]))
+
+        ring <- rbind(bottom, right, pole, left, bottom[1, ])
+        sf::st_sfc(sf::st_polygon(list(ring)), crs = 4326)
+    }
+
+    # Build a regular lon/lat SpatRaster directly from the tabular grid
+    regular_grid_to_raster <- function(data, value_col) {
+        value_col <- rlang::as_name(rlang::ensym(value_col))
+
+        lon_u <- sort(unique(data$lon))
+        lat_u <- sort(unique(data$lat))
+
+        if (length(lon_u) < 2L || length(lat_u) < 2L) {
+            stop("Need at least two unique lon and lat values.")
+        }
+
+        dx <- diff(lon_u)
+        dy <- diff(lat_u)
+
+        dx0 <- stats::median(dx)
+        dy0 <- stats::median(dy)
+
+        tol_x <- max(1e-12, abs(dx0) * 1e-8)
+        tol_y <- max(1e-12, abs(dy0) * 1e-8)
+
+        if (max(abs(dx - dx0)) > tol_x || max(abs(dy - dy0)) > tol_y) {
+            stop("Input data are not on a regular lon/lat grid.")
+        }
+
+        # Clamp to valid lon/lat bounds. If you truly have a row at 90N/90S,
+        # this keeps the raster valid for plotting and avoids the polar artifact.
+        r <- terra::rast(
+            ncols = length(lon_u),
+            nrows = length(lat_u),
+            xmin  = min(lon_u) - dx0 / 2,
+            xmax  = max(lon_u) + dx0 / 2,
+            ymin  = max(min(lat_u) - dy0 / 2, -90),
+            ymax  = min(max(lat_u) + dy0 / 2, 90),
+            crs   = "EPSG:4326"
+        )
+
+        # Aggregate duplicates defensively, then write values by row/col index
+        data_agg <- data |>
+            dplyr::transmute(
+                lon   = .data$lon,
+                lat   = .data$lat,
+                value = .data[[value_col]]
+            ) |>
+            dplyr::group_by(lon, lat) |>
+            dplyr::summarise(
+                value = mean(value, na.rm = TRUE),
+                .groups = "drop"
+            ) |>
+            dplyr::mutate(
+                row  = match(lat, rev(lat_u)), # terra row 1 is the top row
+                col  = match(lon, lon_u),
+                cell = terra::cellFromRowCol(r, row, col)
+            )
+
+        vals <- rep(NA_real_, terra::ncell(r))
+        vals[data_agg$cell] <- data_agg$value
+        terra::values(r) <- vals
+
+        r
+    }
+
+    sf::sf_use_s2(FALSE)
+
+    crop_ll <- make_lonlat_crop(LON_BOUND, LAT_BOUND)
+    crs_out <- sf::st_crs(CRS)$wkt
+
+    coast <- rnaturalearth::ne_countries(scale = "medium", returnclass = "sf") |>
+        sf::st_union() |>
+        sf::st_intersection(crop_ll) |>
+        sf::st_transform(CRS)
+
+    graticule <- sf::st_graticule(
+        lat = GRAT_LAT,
+        lon = GRAT_LON,
+        xlim = c(-180, 180),
+        ylim = c(-90, 90),
+        crs = sf::st_crs(4326)
+    ) |>
+        sf::st_intersection(crop_ll) |>
+        sf::st_transform(CRS)
+
+    plot_df <- df |>
+        dplyr::filter(
+            dplyr::between(lon, LON_BOUND[1], LON_BOUND[2]),
+            dplyr::between(lat, LAT_BOUND[1], LAT_BOUND[2])
+        )
+
+    if (nrow(plot_df) == 0) {
+        stop("No data inside plotting bounds.")
+    }
+
+    if (is.null(clims)) {
+        clims <- range(plot_df[[var_name]], na.rm = TRUE)
+    }
+
+    if (is.null(colorbar_title)) {
+        colorbar_title <- var_name
+    }
+
+    # Full value raster in lon/lat
+    value_ll <- regular_grid_to_raster(plot_df, !!var)
+
+    # First get projected extent/geometry cheaply, then build an oversampled template
+    base_proj <- terra::project(
+        value_ll,
+        crs_out,
+        method = "near",
+        mask = TRUE,
+        threads = TRUE
+    )
+
+    target <- terra::rast(
+        xmin  = terra::xmin(base_proj),
+        xmax  = terra::xmax(base_proj),
+        ymin  = terra::ymin(base_proj),
+        ymax  = terra::ymax(base_proj),
+        ncols = terra::ncol(base_proj) * resolution_factor,
+        nrows = terra::nrow(base_proj) * resolution_factor,
+        crs   = terra::crs(base_proj)
+    )
+
+    # Project the continuous field with bilinear interpolation
+    value_proj <- terra::project(
+        value_ll,
+        target,
+        method = "bilinear",
+        mask = TRUE,
+        threads = TRUE
+    )
+
+    # Optional significance mask: project separately with nearest-neighbor
+    # so the mask stays crisp while the field stays smooth
+    if (!is.null(sig_name)) {
+        sig_ll <- plot_df |>
+            dplyr::mutate(
+                .sig_mask = dplyr::if_else(
+                    .data[[sig_name]] < sig_threshold,
+                    1,
+                    NA_real_
+                )
+            ) |>
+            regular_grid_to_raster(.sig_mask)
+
+        sig_proj <- terra::project(
+            sig_ll,
+            target,
+            method = "near",
+            mask = TRUE,
+            threads = TRUE
+        )
+
+        value_proj <- value_proj * sig_proj
+    }
+
+    grid_rast_df <- terra::as.data.frame(value_proj, xy = TRUE, na.rm = TRUE)
+    names(grid_rast_df)[3] <- "value"
+
+    bbox_proj <- c(
+        xmin = terra::xmin(value_proj),
+        xmax = terra::xmax(value_proj),
+        ymin = terra::ymin(value_proj),
+        ymax = terra::ymax(value_proj)
+    )
+
+    p <- ggplot2::ggplot() +
+        ggplot2::geom_raster(
+            data = grid_rast_df,
+            ggplot2::aes(x = x, y = y, fill = value),
+            interpolate = FALSE
+        ) +
+        ggplot2::geom_sf(
+            data = graticule,
+            color = "grey60",
+            linewidth = 0.25,
+            linetype = "solid"
+        ) +
+        ggplot2::geom_sf(
+            data = coast,
+            fill = NA,
+            color = "black",
+            linewidth = 0.3
+        ) +
+        ggplot2::coord_sf(
+            crs = CRS,
+            xlim = unname(bbox_proj[c("xmin", "xmax")]),
+            ylim = unname(bbox_proj[c("ymin", "ymax")]),
+            expand = FALSE,
+            clip = "off"
+        )
+
+    if (use_diverging) {
+        p <- p + get_diverging_scale(clims = clims)
+    } else {
+        p <- p + get_continuous_scale(clims = clims)
+    }
+
+    p <- p +
+        ggplot2::labs(fill = latex2exp::TeX(colorbar_title)) +
+        ggplot2::guides(
+            fill = ggplot2::guide_colorbar(
+                title.position = "left",
+                barwidth = grid::unit(5, "lines"),
+                barheight = grid::unit(0.5, "lines")
+            )
+        ) +
+        THEME_PUB +
+        ggplot2::theme(
+            strip.placement = "outside",
+            strip.text = ggplot2::element_text(face = "bold"),
+            legend.position = "bottom",
+            legend.direction = "horizontal",
+            legend.box.margin = ggplot2::margin(0, 0, 0, 0),
+            legend.margin = ggplot2::margin(0, 0, 0, 0),
+            axis.text.x = ggplot2::element_blank(),
+            axis.text.y = ggplot2::element_blank(),
+            axis.title.x = ggplot2::element_blank(),
+            axis.title.y = ggplot2::element_blank()
+        )
+
+    p
+}
+
 
 #--- Function to plot the data and change points ------------------------------
 plot_change_points <- function(data,
@@ -501,15 +916,18 @@ add_fitted_line_ci <- function(model, data, line_color = "red",
 #--- Plot Composites ----------------------------------------------------------
 
 grid_and_legend <- function(
-    comp_df, var = "mean", sig_name = "p_value_adj", alpha = .05,
-    clims = c(-.357, 0.357), legend_name = "$\\log(\\sigma^{2}_{EDA})$") {
+    comp_df, var = "composite_mean", sig_name = "p_value_adj", alpha = .05,
+    clims = c(-.357, 0.357), legend_name = "$\\log(\\sigma_{EDA})$",
+    wr_order = WR_ORDER) {
     plots <- list()
     i <- 1
-    for (wri in c(1, 6, 7, 2, 4, 5, 3, 0)) {
-        wrn <- comp_df$wrname[comp_df$wr == wri][1]
+
+    for (wrn in wr_order) {
         wr_df_i <- comp_df %>%
-            filter(wr == wri)
-        # Plotting the mean
+            dplyr::filter(wrname == wrn)
+
+        if (nrow(wr_df_i) == 0) next
+
         p <- plot_spatial(wr_df_i, var,
             legend_name = legend_name,
             sig_name = sig_name,
@@ -526,6 +944,7 @@ grid_and_legend <- function(
                 plot.margin = margin(0, 0, 0, 0),
                 panel.spacing = unit(0, "lines")
             ) + labs(title = wrn)
+
         plots[[i]] <- add_contour(
             p, wr_df_i,
             contour_var = "z",
@@ -534,12 +953,12 @@ grid_and_legend <- function(
             CRS = CRS,
             contour_linetype = "solid",
             resolution_factor = 4,
-            contour_binwidth = 9807 # every 100 gpdm
+            contour_binwidth = 9807
         )
         i <- i + 1
     }
 
-    # Get legend from one plot with legend
+    # use last non-empty wr_df_i for legend
     p_legend <- plot_spatial(wr_df_i, var,
         legend_name = legend_name,
         sig_name = sig_name,
@@ -548,20 +967,21 @@ grid_and_legend <- function(
         use_diverging = TRUE,
         clims = clims
     ) + theme(legend.position = "bottom")
-    # Extract just the legend grob
+
     legend_grob <- ggplotGrob(
         p_legend
     )$grobs[[which(sapply(
         ggplotGrob(p_legend)$grobs,
         function(x) x$name
     ) == "guide-box")]]
-    legend_grob$grobs[[1]]$grobs[[2]]$children[[1]]$gp$fontsize <- 24 # Title size
-    legend_grob$grobs[[1]]$grobs[[1]]$children[[1]]$grobs[[1]]$children[[1]]$gp$fontsize <- 20 # Text size
 
-    # Manually create a new plot containing just the legend
+    legend_grob$grobs[[1]]$grobs[[2]]$children[[1]]$gp$fontsize <- 24
+    legend_grob$grobs[[1]]$grobs[[1]]$children[[1]]$grobs[[1]]$children[[1]]$gp$fontsize <- 20
+
     legend_plot <- ggplot() +
         annotation_custom(legend_grob) +
         theme_void()
+
     return(list(plots, legend_plot))
 }
 combine_plots <- function(plots, legend_plot, orientation = "horizontal") {
