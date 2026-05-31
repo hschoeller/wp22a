@@ -10,6 +10,7 @@ library(colorspace)
 # library(tikzDevice)
 library(cowplot)
 library(stars)
+library(scales)
 
 Sys.setlocale("LC_TIME", "en_US.UTF-8")
 
@@ -51,14 +52,18 @@ GRATICULE <- st_graticule(
 ) %>%
     st_transform(CRS)
 
-get_continuous_scale <- function(clims = NULL) {
+get_continuous_scale <- function(clims = NULL, n_bins = NULL, n_ticks = 3, breaks = NULL) {
     if (is.null(clims)) {
         return(scale_fill_scico(palette = CONT_SEQ_SCALE))
     } else {
+        if (is.null(breaks)) {
+            breaks <- pretty(clims, n = n_ticks)
+        }
         return(scale_fill_scico(
             palette = CONT_SEQ_SCALE,
             limits = clims,
-            expand = expansion(mult = 0, add = 0)
+            expand = expansion(mult = 0, add = 0),
+            breaks = breaks
         ))
     }
 }
@@ -73,31 +78,55 @@ get_categorical_scale <- function(clims = NULL) {
     #     palette = CONT_SEQ_SCALE
     # ))
 }
-
-get_diverging_scale <- function(clims = NULL) {
+get_diverging_scale <- function(
+    clims = NULL, n_bins = NULL, n_ticks = 3,
+    breaks = NULL) {
     if (is.null(clims)) {
-        return(scale_fill_scico(palette = "vik", direction = 1, midpoint = 0))
-    } else {
-        # Ensure the color scale is properly centered at 0
-        max_abs <- max(abs(clims))
-        if (any(clims < 0) && any(clims > 0)) {
-            # If clims spans negative and positive values
-            return(scale_fill_scico(
-                palette = "vik",
-                direction = 1,
-                midpoint = 0,
-                limits = clims,
-                na.value = "transparent"
-            ))
-        } else {
-            # If clims is only positive or only negative
-            return(scale_fill_scico(
-                palette = "vik",
-                direction = 1,
-                limits = clims,
-                na.value = "transparent"
-            ))
+        if (!is.null(n_bins)) {
+            stop("`n_bins` requires `clims` to be specified.")
         }
+        return(scale_fill_scico(palette = "vik", direction = 1, midpoint = 0, oob = squish))
+    }
+
+    if (!is.null(n_bins)) {
+        breaks <- pretty(clims, n = n_bins)
+        max_abs <- max(abs(clims))
+
+        palette_start <- 0.5 + clims[1] / (2 * max_abs)
+        palette_end <- 0.5 + clims[2] / (2 * max_abs)
+        sample_pos <- seq(palette_start, palette_end, length.out = length(breaks) - 1)
+
+        vik_colors <- scico::scico(1000, palette = "vik")
+        bin_colors <- vik_colors[round(sample_pos * 999) + 1]
+
+        return(ggplot2::scale_fill_stepsn(
+            colors = bin_colors,
+            breaks = breaks,
+            limits = clims,
+            na.value = "transparent",
+            oob = squish
+        ))
+    }
+    if (!is.null(breaks)) {
+        return(scale_fill_scico(
+            palette = "vik",
+            direction = 1,
+            midpoint = 0,
+            limits = clims,
+            na.value = "transparent",
+            breaks = breaks,
+            oob = squish
+        ))
+    } else {
+        return(scale_fill_scico(
+            palette = "vik",
+            direction = 1,
+            midpoint = 0,
+            limits = clims,
+            na.value = "transparent",
+            breaks = pretty(clims, n = n_ticks),
+            oob = squish
+        ))
     }
 }
 
@@ -539,7 +568,11 @@ plot_map_fast <- function(
     sig_threshold = 0.05,
     use_diverging = FALSE,
     clims = NULL,
-    resolution_factor = 4) {
+    resolution_factor = 4,
+    contour_var = NULL, # NEW
+    contour_bins = 10, # optional control
+    contour_breaks = NULL # optional explicit levels
+    ) {
     var <- rlang::ensym(var)
     var_name <- rlang::as_name(var)
 
@@ -685,7 +718,23 @@ plot_map_fast <- function(
         mask = TRUE,
         threads = TRUE
     )
+    if (!is.null(contour_var)) {
+        contour_sym <- rlang::ensym(contour_var)
+        contour_name <- rlang::as_name(contour_sym)
 
+        contour_ll <- regular_grid_to_raster(plot_df, !!contour_sym)
+
+        contour_proj <- terra::project(
+            contour_ll,
+            target,
+            method = "bilinear",
+            mask = TRUE,
+            threads = TRUE
+        )
+
+        contour_df <- terra::as.data.frame(contour_proj, xy = TRUE, na.rm = TRUE)
+        names(contour_df)[3] <- "z"
+    }
     # Optional significance mask: project separately with nearest-neighbor
     # so the mask stays crisp while the field stays smooth
     if (!is.null(sig_name)) {
@@ -737,7 +786,21 @@ plot_map_fast <- function(
             fill = NA,
             color = "black",
             linewidth = 0.3
-        ) +
+        )
+
+    if (!is.null(contour_var)) {
+        p <- p +
+            ggplot2::geom_contour(
+                data = contour_df,
+                ggplot2::aes(x = x, y = y, z = z),
+                bins = if (is.null(contour_breaks)) contour_bins else NULL,
+                breaks = contour_breaks,
+                color = "darkgreen",
+                linewidth = 0.3,
+                linetype = "solid"
+            )
+    }
+    p <- p +
         ggplot2::coord_sf(
             crs = CRS,
             xlim = unname(bbox_proj[c("xmin", "xmax")]),
@@ -747,7 +810,7 @@ plot_map_fast <- function(
         )
 
     if (use_diverging) {
-        p <- p + get_diverging_scale(clims = clims)
+        p <- p + get_diverging_scale(clims = clims, n_bins = )
     } else {
         p <- p + get_continuous_scale(clims = clims)
     }
@@ -779,6 +842,421 @@ plot_map_fast <- function(
 }
 
 
+plot_map_faceted <- function(
+    df,
+    var,
+    facet_var,
+    use_diverging = FALSE,
+    p_val = NULL,
+    sig_threshold = 0.05,
+    facet_names = NULL,
+    contour_var = NULL,
+    contour_bin_width = NULL,
+    contour_col = "darkgreen",
+    self_contour_bin_width = NULL, # <-- new
+    self_contour_col = "white",
+    c_bar_label = NULL,
+    n_bins_cbar = NULL,
+    c_bar_breaks = NULL,
+    clims = NULL,
+    resolution_factor = 4,
+    facet_nrow = NULL) {
+    var <- rlang::ensym(var)
+    facet_var <- rlang::ensym(facet_var)
+    var_name <- rlang::as_name(var)
+    facet_var_name <- rlang::as_name(facet_var)
+
+    p_val_expr <- rlang::enexpr(p_val)
+    contour_var_expr <- rlang::enexpr(contour_var)
+
+    p_val_name <- if (!is.null(p_val_expr)) {
+        rlang::as_name(p_val_expr)
+    } else {
+        NULL
+    }
+
+    contour_var_name <- if (!is.null(contour_var_expr)) {
+        rlang::as_name(contour_var_expr)
+    } else {
+        NULL
+    }
+
+    # ------------------------------------------------------------------ #
+    #  Helpers (identical to plot_map_fast)                               #
+    # ------------------------------------------------------------------ #
+    make_lonlat_crop <- function(lon_bound, lat_bound, n = 1000) {
+        lon_seq <- seq(lon_bound[1], lon_bound[2], length.out = n)
+        lat_seq <- seq(lat_bound[1], lat_bound[2], length.out = n)
+        bottom <- cbind(lon_seq, lat_bound[1])
+        right <- cbind(rep(lon_bound[2], n - 2), lat_seq[2:(n - 1)])
+        pole <- matrix(c(0, 90), ncol = 2)
+        left <- cbind(rep(lon_bound[1], n - 2), rev(lat_seq[2:(n - 1)]))
+        ring <- rbind(bottom, right, pole, left, bottom[1, ])
+        sf::st_sfc(sf::st_polygon(list(ring)), crs = 4326)
+    }
+
+    regular_grid_to_raster <- function(data, value_col) {
+        value_col <- rlang::as_name(rlang::ensym(value_col))
+        lon_u <- sort(unique(data$lon))
+        lat_u <- sort(unique(data$lat))
+
+        if (length(lon_u) < 2L || length(lat_u) < 2L) {
+            stop("Need at least two unique lon and lat values.")
+        }
+
+        dx <- diff(lon_u)
+        dy <- diff(lat_u)
+        dx0 <- stats::median(dx)
+        dy0 <- stats::median(dy)
+        tol_x <- max(1e-12, abs(dx0) * 1e-8)
+        tol_y <- max(1e-12, abs(dy0) * 1e-8)
+
+        if (
+            max(abs(dx - dx0)) > tol_x ||
+                max(abs(dy - dy0)) > tol_y
+        ) {
+            stop("Input data are not on a regular lon/lat grid.")
+        }
+
+        r <- terra::rast(
+            ncols = length(lon_u),
+            nrows = length(lat_u),
+            xmin  = min(lon_u) - dx0 / 2,
+            xmax  = max(lon_u) + dx0 / 2,
+            ymin  = max(min(lat_u) - dy0 / 2, -90),
+            ymax  = min(max(lat_u) + dy0 / 2, 90),
+            crs   = "EPSG:4326"
+        )
+
+        data_agg <- data |>
+            dplyr::transmute(
+                lon   = .data$lon,
+                lat   = .data$lat,
+                value = .data[[value_col]]
+            ) |>
+            dplyr::group_by(lon, lat) |>
+            dplyr::summarise(
+                value = mean(value, na.rm = TRUE),
+                .groups = "drop"
+            ) |>
+            dplyr::mutate(
+                row  = match(lat, rev(lat_u)),
+                col  = match(lon, lon_u),
+                cell = terra::cellFromRowCol(r, row, col)
+            )
+
+        vals <- rep(NA_real_, terra::ncell(r))
+        vals[data_agg$cell] <- data_agg$value
+        terra::values(r) <- vals
+        r
+    }
+
+    project_to_target <- function(ll_rast, target, method = "bilinear") {
+        terra::project(
+            ll_rast,
+            target,
+            method  = method,
+            mask    = TRUE,
+            threads = TRUE
+        )
+    }
+
+    build_target <- function(base_proj, res_factor) {
+        terra::rast(
+            xmin  = terra::xmin(base_proj),
+            xmax  = terra::xmax(base_proj),
+            ymin  = terra::ymin(base_proj),
+            ymax  = terra::ymax(base_proj),
+            ncols = terra::ncol(base_proj) * res_factor,
+            nrows = terra::nrow(base_proj) * res_factor,
+            crs   = terra::crs(base_proj)
+        )
+    }
+
+    # ------------------------------------------------------------------ #
+    #  Shared spatial objects                                             #
+    # ------------------------------------------------------------------ #
+    sf::sf_use_s2(FALSE)
+    crs_out <- sf::st_crs(CRS)$wkt
+    crop_ll <- make_lonlat_crop(LON_BOUND, LAT_BOUND)
+
+    coast <- rnaturalearth::ne_countries(
+        scale       = "medium",
+        returnclass = "sf"
+    ) |>
+        sf::st_union() |>
+        sf::st_intersection(crop_ll) |>
+        sf::st_transform(CRS)
+
+    graticule <- sf::st_graticule(
+        lat  = GRAT_LAT,
+        lon  = GRAT_LON,
+        xlim = c(-180, 180),
+        ylim = c(-90, 90),
+        crs  = sf::st_crs(4326)
+    ) |>
+        sf::st_intersection(crop_ll) |>
+        sf::st_transform(CRS)
+
+    # ------------------------------------------------------------------ #
+    #  Pre-filter to plotting bounds                                      #
+    # ------------------------------------------------------------------ #
+    plot_df <- df |>
+        dplyr::filter(
+            dplyr::between(lon, LON_BOUND[1], LON_BOUND[2]),
+            dplyr::between(lat, LAT_BOUND[1], LAT_BOUND[2])
+        )
+
+    if (nrow(plot_df) == 0) stop("No data inside plotting bounds.")
+
+    if (is.null(clims)) {
+        clims <- range(plot_df[[var_name]], na.rm = TRUE)
+    }
+    if (is.null(c_bar_label)) {
+        c_bar_label <- var_name
+    }
+
+    facet_levels <- levels(plot_df[[facet_var_name]])
+
+    if (!is.null(facet_names)) {
+        if (length(facet_names) != length(facet_levels)) {
+            stop(
+                "`facet_names` length must match number of ",
+                facet_var_name, " levels (",
+                length(facet_levels), ")."
+            )
+        }
+        facet_label_map <- stats::setNames(facet_names, facet_levels)
+    }
+
+    # ------------------------------------------------------------------ #
+    #  Per-facet raster projection                                        #
+    # ------------------------------------------------------------------ #
+    projected_value_dfs <- vector("list", length(facet_levels))
+    projected_contour_dfs <- vector("list", length(facet_levels))
+
+    for (i in seq_along(facet_levels)) {
+        level <- facet_levels[[i]]
+        level_df <- dplyr::filter(
+            plot_df,
+            .data[[facet_var_name]] == level
+        )
+
+        value_ll <- regular_grid_to_raster(level_df, !!var)
+
+        base_proj <- terra::project(
+            value_ll,
+            crs_out,
+            method  = "near",
+            mask    = TRUE,
+            threads = TRUE
+        )
+        target <- build_target(base_proj, resolution_factor)
+
+        value_proj <- project_to_target(value_ll, target)
+
+        if (!is.null(p_val_name)) {
+            sig_ll <- level_df |>
+                dplyr::mutate(
+                    .sig_mask = dplyr::if_else(
+                        .data[[p_val_name]] < sig_threshold,
+                        1,
+                        NA_real_
+                    )
+                ) |>
+                regular_grid_to_raster(.sig_mask)
+
+            sig_proj <- project_to_target(sig_ll, target, "near")
+            value_proj <- value_proj * sig_proj
+        }
+
+        panel_label <- if (!is.null(facet_names)) {
+            facet_label_map[[as.character(level)]]
+        } else {
+            as.character(level)
+        }
+
+        panel_df <- terra::as.data.frame(
+            value_proj,
+            xy     = TRUE,
+            na.rm  = TRUE
+        )
+        names(panel_df)[3] <- "value"
+        panel_df <- dplyr::mutate(panel_df, facet_label = panel_label)
+
+        projected_value_dfs[[i]] <- panel_df
+
+        if (!is.null(contour_var_name)) {
+            contour_ll <- regular_grid_to_raster(
+                level_df,
+                !!rlang::sym(contour_var_name)
+            )
+            contour_proj <- project_to_target(contour_ll, target)
+            contour_df <- terra::as.data.frame(
+                contour_proj,
+                xy    = TRUE,
+                na.rm = TRUE
+            )
+            names(contour_df)[3] <- "contour_value"
+            contour_df <- dplyr::mutate(contour_df, facet_label = panel_label)
+            projected_contour_dfs[[i]] <- contour_df
+        }
+    }
+
+
+    all_value_df <- dplyr::bind_rows(projected_value_dfs)
+
+    bbox_proj <- c(
+        xmin = min(all_value_df$x),
+        xmax = max(all_value_df$x),
+        ymin = min(all_value_df$y),
+        ymax = max(all_value_df$y)
+    )
+    bbox_proj <- sf::st_bbox(sf::st_transform(crop_ll, CRS))
+
+    label_order <- if (!is.null(facet_names)) {
+        facet_names
+    } else {
+        as.character(facet_levels)
+    }
+
+    # Create a version with TeX formatting for display
+    display_labels <- if (!is.null(facet_names)) {
+        as.character(latex2exp::TeX(facet_names)) # Convert to character
+    } else {
+        as.character(latex2exp::TeX(as.character(facet_levels)))
+    }
+
+    facet_label_df <- data.frame(
+        facet_label = factor(label_order, levels = label_order),
+        display_label = display_labels,
+        x = bbox_proj[["xmin"]],
+        y = bbox_proj[["ymax"]]
+    )
+    all_value_df$facet_label <- factor(
+        all_value_df$facet_label,
+        levels = label_order
+    )
+
+    # ------------------------------------------------------------------ #
+    #  Build plot                                                         #
+    # ------------------------------------------------------------------ #
+    p <- ggplot2::ggplot() +
+        ggplot2::geom_raster(
+            data = all_value_df,
+            mapping = ggplot2::aes(x = x, y = y, fill = value),
+            interpolate = FALSE
+        ) +
+        ggplot2::geom_sf(
+            data      = graticule,
+            color     = "grey60",
+            linewidth = 0.25,
+            linetype  = "solid"
+        ) +
+        ggplot2::geom_sf(
+            data      = coast,
+            fill      = NA,
+            color     = "black",
+            linewidth = 0.2
+        )
+
+    if (!is.null(contour_var_name)) {
+        all_contour_df <- dplyr::bind_rows(projected_contour_dfs)
+        all_contour_df$facet_label <- factor(
+            all_contour_df$facet_label,
+            levels = label_order
+        )
+
+        contour_args <- list(
+            data = all_contour_df,
+            mapping = ggplot2::aes(x = x, y = y, z = contour_value),
+            color = contour_col,
+            linewidth = 0.3
+        )
+        if (!is.null(contour_bin_width)) {
+            contour_args$binwidth <- contour_bin_width
+        }
+
+        p <- p + do.call(ggplot2::geom_contour, contour_args)
+    }
+    if (!is.null(self_contour_bin_width)) {
+        self_contour_args <- list(
+            data = all_value_df,
+            mapping = ggplot2::aes(x = x, y = y, z = value),
+            color = self_contour_col,
+            linewidth = 0.1,
+            binwidth = self_contour_bin_width
+        )
+        p <- p + do.call(ggplot2::geom_contour, self_contour_args)
+    }
+
+    p <- p +
+        ggplot2::geom_text(
+            data = facet_label_df,
+            mapping = ggplot2::aes(x = x, y = y, label = display_label),
+            hjust = 0,
+            vjust = 1,
+            size = 4,
+            parse = TRUE, # This will parse the text as plotmath expressions
+            inherit.aes = FALSE
+        ) +
+        ggplot2::coord_sf(
+            crs    = CRS,
+            xlim   = unname(bbox_proj[c("xmin", "xmax")]),
+            ylim   = unname(bbox_proj[c("ymin", "ymax")]),
+            expand = FALSE,
+            clip   = "off"
+        ) +
+        ggplot2::facet_wrap(
+            ggplot2::vars(facet_label),
+            strip.position = "top",
+            nrow = facet_nrow
+        )
+
+    p <- p + if (use_diverging) {
+        get_diverging_scale(clims = clims, n_bins = n_bins_cbar, breaks = c_bar_breaks)
+    } else {
+        get_continuous_scale(clims = clims, n_bins = n_bins_cbar, breaks = c_bar_breaks)
+    }
+
+    p <- p +
+        ggplot2::labs(fill = latex2exp::TeX(c_bar_label)) +
+        ggplot2::guides(
+            fill = ggplot2::guide_colorbar(
+                title.position = "left",
+                barwidth = grid::unit(
+                    if (!is.null(n_bins_cbar)) 1.5 * n_bins_cbar else 5,
+                    "lines"
+                ),
+                barheight = grid::unit(0.5, "lines")
+            )
+        ) +
+        THEME_PUB +
+        ggplot2::theme(
+            panel.spacing = ggplot2::unit(0.25, "lines"),
+            strip.text = ggplot2::element_blank(),
+            strip.background = ggplot2::element_blank(),
+            # strip.placement = "outside",
+            # strip.text = ggplot2::element_text(
+            #     face   = "bold",
+            #     margin = ggplot2::margin(b = .5, unit = "lines") # reduce bottom margin
+            # ),
+            legend.position = "bottom",
+            legend.direction = "horizontal",
+            legend.box.margin = ggplot2::margin(t = -.5, unit = "lines"),
+            legend.margin = ggplot2::margin(0, 0, 0, 0),
+            axis.text.x = ggplot2::element_blank(),
+            axis.text.y = ggplot2::element_blank(),
+            axis.title.x = ggplot2::element_blank(),
+            axis.title.y = ggplot2::element_blank()
+        )
+
+    p
+}
+
+
+
+
 #--- Function to plot the data and change points ------------------------------
 plot_change_points <- function(data,
                                cp_df,
@@ -791,7 +1269,7 @@ plot_change_points <- function(data,
             x = "Year",
             y = TeX("$\\log(\\sigma_{EDA})$"),
             title = title,
-            color = "Break points"
+            color = "Breakpoints"
         ) +
         scale_x_date(date_breaks = "5 year", date_labels = "%Y") +
         get_categorical_scale()
@@ -807,12 +1285,13 @@ plot_change_points <- function(data,
 
     if (nrow(cp_df) > 0) {
         # Compute a y position for the labels
-        cp_df$y_pos <- max(data$log_variance, na.rm = TRUE) * 0.8
-        cp_df$y_pos[cp_df$cp_date == min(cp_df$cp_date)] <- max(
-            data$log_variance,
-            na.rm = TRUE
-        ) * 0.5
-
+        if (is.null(cp_df$y_pos)) {
+            cp_df$y_pos <- max(data$log_variance, na.rm = TRUE) * 0.8
+            cp_df$y_pos[cp_df$cp_date == min(cp_df$cp_date)] <- max(
+                data$log_variance,
+                na.rm = TRUE
+            ) * 0.5
+        }
         # If showing uncertainty, add a shaded rectangle using cp_date_lower and cp_date_upper
         if (show_ci &&
             all(c("cp_date_lower", "cp_date_upper") %in% names(cp_df))) {
@@ -1183,17 +1662,17 @@ plot_multiple_grid_points_daily_one_year <- function(df_obj, year) {
         geom_ribbon(
             data = ribbon_df,
             aes(x = date, ymin = lwr_log, ymax = upr_log, fill = grid, group = grid),
-            alpha = 0.95,
+            alpha = 1,
             show.legend = FALSE
         ) +
         # Observed POINTS (shape from marker_shape; colored by grid)
         geom_point(
             data = obs_pts,
             aes(x = date, y = value, color = grid, shape = marker_shape),
-            size = 1.8,
+            size = 1,
             fill = "white",
-            stroke = 0.8,
-            alpha = 1,
+            stroke = 0.5,
+            alpha = .75,
             show.legend = FALSE
         ) +
         scale_color_manual(values = pal_obs, name = NULL) +
@@ -1481,13 +1960,14 @@ plot_spectral_power_obs_and_resid <- function(spec_df) {
 
 save_plot <- function(
     plot_obj, filename, width = 6, height = 4,
-    type = "pdf") {
+    type = "pdf", tight = TRUE) {
     tight_theme <- theme(
-        plot.margin = margin(0, 0, 0, 0),
+        plot.margin = margin(0, 2, 0, 2),
         panel.spacing = unit(0, "pt")
     )
-
-    plot_obj <- plot_obj + tight_theme
+    if (tight) {
+        plot_obj <- plot_obj + tight_theme
+    }
     if (type == "tikz") {
         plot_obj <- plot_obj + theme_minimal(base_size = 33)
         tikz(

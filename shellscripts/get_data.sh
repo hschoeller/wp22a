@@ -4,7 +4,7 @@
 #SBATCH --output=logs/GetData_%A_%a.out
 #SBATCH --error=logs/GetData_%A_%a.err
 
-#SBATCH --array=1-1
+#SBATCH --array=0
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
@@ -40,5 +40,22 @@ fi
 # python ../pyscripts/splitter.py "/net/scratch/schoelleh96/WP2/WP2.2a/${BASEFOLDER}/${VAR}.nc" \
 #     "/net/scratch/schoelleh96/WP2/WP2.2a/${BASEFOLDER}/${VAR_SHORT}_chunks/" --chunks 1 48 --no-regrid
 
-python ../pyscripts/get_data.py "geopotential" "reanalysis-era5-pressure-levels" \
-    "reanalysis" "False" "z" "/net/scratch/schoelleh96/WP2/WP2.2a/"
+# python ../pyscripts/get_data.py "geopotential" "reanalysis-era5-pressure-levels" \
+#     "reanalysis" "False" "z" "/net/scratch/schoelleh96/WP2/WP2.2a/"
+
+TASKS=(
+  "r  relative_humidity 650"
+  "r  relative_humidity 600"
+  "r  relative_humidity 550"
+  "r  relative_humidity 500"
+)
+
+read -r VAR_SHORT VAR PLEV <<< "${TASKS[$SLURM_ARRAY_TASK_ID]}"
+
+DATASET="reanalysis-era5-pressure-levels"
+PRODUCT_TYPE="reanalysis"
+ENS="False"
+OUTROOT="/scratch/schoelleh96/wp22a"
+
+python ../pyscripts/get_data.py "${VAR}" "${DATASET}" "${PRODUCT_TYPE}" "${ENS}" \
+    "${VAR_SHORT}" "/net/scratch/schoelleh96/WP2/WP2.2a/" "${PLEV}"
