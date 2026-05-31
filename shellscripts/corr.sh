@@ -9,7 +9,7 @@
 #SBATCH --mem=60G
 #SBATCH --qos=agpfahl
 #SBATCH --time=14-00:00:00
-#SBATCH --array=0-2
+#SBATCH --array=1
 
 export OMP_NUM_THREADS=1
 export MKL_NUM_THREADS=1
@@ -35,7 +35,7 @@ mkdir -p "${OUT_DIR}" ./logs
 #   "eady"
 #   "wind"
 #   "hydrosum"
-#   "rh"
+  # "rh"
 # )
 
 # NC_FILES=(
@@ -44,7 +44,7 @@ mkdir -p "${OUT_DIR}" ./logs
 #   "/scratch/schoelleh96/wp22a/data/eady.nc"
 #   "/scratch/schoelleh96/wp22a/data/wind.nc"
 #   "/scratch/schoelleh96/wp22a/data/hydrosum.nc"
-#   "/scratch/schoelleh96/wp22a/data/relative_humidity_700-850.nc"
+  # "/scratch/schoelleh96/wp22a/data/relative_humidity_500-850.nc"
 # )
 
 # VAR_NAMES=(
@@ -59,17 +59,21 @@ mkdir -p "${OUT_DIR}" ./logs
 NAMES=(
   "z_grad_mag"
   "z_laplacian"
+  "z_abs_laplacian"
 )
 
 NC_FILES=(
   "/scratch/schoelleh96/wp22a/data/z500_grad_mag.nc"
   "/scratch/schoelleh96/wp22a/data/z500_laplacian.nc"
+  "/scratch/schoelleh96/wp22a/data/z500_abs_laplacian.nc"
 )
 
 VAR_NAMES=(
   "z_grad_mag"
   "z_laplacian"
+  "z_abs_laplacian"
 )
+
 
 i=${SLURM_ARRAY_TASK_ID}
 
@@ -83,20 +87,12 @@ echo "NC file: ${NC_FILE}"
 echo "Variable: ${VAR_NAME}"
 echo "Output: ${OUT_FILE}"
 
+NC_FILE="/scratch/schoelleh96/wp22a/data/zg500_processed.nc"
+VAR_NAME="zg500_prime_lp"
+OUT_FILE="${OUT_DIR}/yearly_corr_zg500_lp.rds"
+
 Rscript "${SCRIPT}" \
   "${RESP_RDS}" \
   "${NC_FILE}" \
   "${VAR_NAME}" \
   "${OUT_FILE}"
-
-# DONT USE ANYMORE: LAT INDEXING ERROR
-
-# Rscript /home/schoelleh96/wp22a/RScripts/corr_rh.r \
-#     /home/schoelleh96/wp22a/ens_data/residual_cube_weighted.rds \
-#     /scratch/schoelleh96/wp22a/data/relative_humidity_700-850.nc \
-#     /home/schoelleh96/wp22a/ens_data/rh_corrAll.rds
-
-# Rscript /home/schoelleh96/wp22a/RScripts/corr_hyd.r \
-#     /home/schoelleh96/wp22a/ens_data/residual_cube_weighted.rds \
-#     /scratch/schoelleh96/wp22a/data/hydrosum.nc \
-#     /home/schoelleh96/wp22a/ens_data/hydro_corr_yearly.rds

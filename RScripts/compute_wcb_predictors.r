@@ -152,30 +152,66 @@ dt <- merge(dt, wr_df[, .(date, wrname)], by = "date", all.x = TRUE, sort = TRUE
 out <- data.table(
   date = dt$date,
   wrname = dt$wrname,
-  in_24 = NA_real_,
-  asc_12 = NA_real_,
-  out_00 = NA_real_
+  inf_24 = NA_real_, inf_12 = NA_real_, inf_00 = NA_real_,
+  asc_24 = NA_real_, asc_12 = NA_real_, asc_00 = NA_real_,
+  out_24 = NA_real_, out_12 = NA_real_, out_00 = NA_real_
 )
+
+# mapping (same logic you already use, just generalized)
+spec <- list(
+  inflow = list(
+    lag24 = list(offset = -1, hour = 12, var = "GT800"),
+    lag12 = list(offset = -1, hour = 0,  var = "GT800"),
+    lag0  = list(offset =  0, hour = 12, var = "GT800")
+  ),
+  ascent = list(
+    lag24 = list(offset = -1, hour = 12, var = "MIDTROP"),
+    lag12 = list(offset = -1, hour = 0,  var = "MIDTROP"),
+    lag0  = list(offset =  0, hour = 12, var = "MIDTROP")
+  ),
+  outflow = list(
+    lag24 = list(offset = -1, hour = 12, var = "LT400"),
+    lag12 = list(offset = -1, hour = 0,  var = "LT400"),
+    lag0  = list(offset =  0, hour = 12, var = "LT400")
+  )
+)
+cache <- new.env(parent = emptyenv())
+
+get_file <- function(date, hour) {
+  key <- paste(date, hour, sep = "_")
+  if (!exists(key, envir = cache)) {
+    cache[[key]] <- read_wcb_file(find_wcb_file(RAW_ROOT, date, hour))
+  }
+  cache[[key]]
+}
 
 for (k in seq_len(nrow(dt))) {
   reg <- dt$wrname[k]
   if (is.na(reg) || !(reg %in% names(mask_lookup))) next
 
-  # predictor timing:
-  # inflow  -> lag24 -> previous day 12 UTC
-  # ascent  -> lag12 -> previous day 00 UTC
-  # outflow -> lag00 -> current day 12 UTC
-  date_in  <- dt$date[k] - 1
-  date_asc <- dt$date[k] - 1
-  date_out <- dt$date[k]
+  for (p in names(spec)) {
+    for (l in names(spec[[p]])) {
 
-  f12_in  <- read_wcb_file(find_wcb_file(RAW_ROOT, date_in, 12))
-  f00_asc <- read_wcb_file(find_wcb_file(RAW_ROOT, date_asc, 0))
-  f12_out <- read_wcb_file(find_wcb_file(RAW_ROOT, date_out, 12))
+      s <- spec[[p]][[l]]
 
-  out$in_24[k]  <- weighted_sum_45(f12_in$GT800,     mask_lookup[[reg]][["inflow"]][["lag24"]])
-  out$asc_12[k] <- weighted_sum_45(f00_asc$MIDTROP,  mask_lookup[[reg]][["ascent"]][["lag12"]])
-  out$out_00[k] <- weighted_sum_45(f12_out$LT400,    mask_lookup[[reg]][["outflow"]][["lag0"]])
+      date_use <- dt$date[k] + s$offset
+      file <- get_file(date_use, s$hour)
+
+
+      val <- weighted_sum_45(
+        file[[s$var]],
+        mask_lookup[[reg]][[p]][[l]]
+      )
+
+      # keep exact naming convention
+      col <- paste0(
+        substr(p, 1, 3), "_",
+        if (l == "lag0") "00" else sub("lag", "", l)
+      )
+
+      out[[col]][k] <- val
+    }
+  }
 }
 
 saveRDS(out, OUT_FILE, compress = "xz")

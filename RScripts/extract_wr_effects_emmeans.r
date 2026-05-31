@@ -4,6 +4,8 @@ suppressPackageStartupMessages({
   library(nlme)
   library(emmeans)
   library(parallel)
+  library(dplyr)
+  library(tidyr)
 })
 
 args <- commandArgs(trailingOnly = TRUE)

@@ -39,6 +39,7 @@ process_grid_point <- function(lat, lon, z, time, cps, wrs) {
     z_df <- data.frame(time = time, z = z)
     print("Data frame created")
     z_df$year <- as.integer(format(z_df$time, "%Y"))
+    z_df$year_c <- z_df$year - mean(z_df$year)
     z_df$doy <- as.integer(format(z_df$time, "%j"))
     print("now combine")
 
@@ -78,7 +79,7 @@ process_grid_point <- function(lat, lon, z, time, cps, wrs) {
     print("Estimate linear model")
     rhs <- c(
     "segment",
-    "segment:year",
+    "segment:year_c",
     "segment:sin_doy + segment:cos_doy"
     )
 
@@ -103,13 +104,14 @@ process_grid_point <- function(lat, lon, z, time, cps, wrs) {
         data = z_df,
         correlation = corAR1(form = ~ day_no | segment),
         weights = varIdent(form = ~ 1 | segment),
-          control = glsControl(
-    maxIter = 500,
-    msMaxIter = 500,
-    tolerance = 1e-5,
-    msTol = 1e-5,
-    msVerbose = TRUE
-  )
+    control = glsControl(
+        opt = "optim",
+        optimMethod = "BFGS",
+        maxIter = 500,
+        msMaxIter = 500,
+        tolerance = 1e-4,
+        msTol = 1e-4
+    )
     )
     lmod_seas$data <- z_df
     print("Saving linear model")

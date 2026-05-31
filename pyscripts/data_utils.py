@@ -1,3 +1,5 @@
+from re import sub
+
 import numpy as np
 import xarray as xr
 # from scipy.signal import detrend
@@ -97,7 +99,7 @@ def retrieve_era5(
     return f"{var}{pressure_level}.grib"
 
 
-def convert_grib_to_nc(d_path, grib_name, cleanup=True):
+def convert_grib_to_nc(d_path, grib_name, cleanup=True, subset_half_degree=True):
     """
     Convert a GRIB file to NetCDF format, subsetting to 0.5° resolution grid points.
 
@@ -130,19 +132,22 @@ def convert_grib_to_nc(d_path, grib_name, cleanup=True):
         def is_half_degree(arr):
             return np.isclose(np.mod(arr, 1), 0.0) | np.isclose(np.mod(arr, 1), 0.5)
 
-        # Create boolean masks for each coordinate
-        lat_mask = is_half_degree(ds[lat_name])
-        lon_mask = is_half_degree(ds[lon_name])
+        if subset_half_degree:
+            # Create boolean masks for each coordinate
+            lat_mask = is_half_degree(ds[lat_name])
+            lon_mask = is_half_degree(ds[lon_name])
 
-        # Method 1: Using isel with boolean indexing
-        ds = ds.isel({
-            lat_name: lat_mask,
-            lon_name: lon_mask
-        })
+            # Method 1: Using isel with boolean indexing
+            ds = ds.isel({
+                lat_name: lat_mask,
+                lon_name: lon_mask
+            })
 
         # Save as NetCDF
         base_name = os.path.splitext(grib_name)[0]
         nc_filename = f"{base_name}.nc"
+        if not(subset_half_degree):
+            nc_filename = f"{base_name}_full.nc"
         nc_filepath = os.path.join(d_path, nc_filename)
         print(f"Saving to NetCDF file: {nc_filepath}")
         ds.to_netcdf(nc_filepath, format="NETCDF4")

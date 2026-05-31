@@ -12,4 +12,4 @@ datasets = [xr.open_dataset(f, chunks="auto") for f in files]
 arrs = [ds["r"] for ds in datasets]
 
 rh_mean = xr.concat(arrs, dim="level").mean("level").rename("r")
-rh_mean.to_dataset().to_netcdf("relative_humidity_700-850.nc")
+rh_mean.to_dataset().to_netcdf("relative_humidity_500-850.nc")

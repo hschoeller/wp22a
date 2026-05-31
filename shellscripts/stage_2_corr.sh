@@ -3,7 +3,7 @@
 #SBATCH --job-name=Stage2Corr
 #SBATCH --output=./logs/Stage2Corr_%a.out
 #SBATCH --error=./logs/Stage2Corr_%a.err
-#SBATCH --array=0-2652%500
+#SBATCH --array=260
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
 #SBATCH --partition=agpfahl

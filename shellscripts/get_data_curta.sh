@@ -4,7 +4,7 @@
 #SBATCH --output=logs/GetData_%a.out
 #SBATCH --error=logs/GetData_%a.err
 
-#SBATCH --array=0-5
+# SBATCH --array=1
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
@@ -35,6 +35,10 @@ PRODUCT_TYPE="reanalysis"
 ENS="False"
 OUTROOT="/scratch/schoelleh96/wp22a"
 
+VAR="geopotential"
+VAR_SHORT="z"
+PLEV="500"
+
 # TASKS=(
 #   "u  u_component_of_wind 500"
 #   "v  v_component_of_wind 500"
@@ -58,19 +62,19 @@ OUTROOT="/scratch/schoelleh96/wp22a"
 
 # read -r VAR_SHORT VAR PLEV <<< "${TASKS[$SLURM_ARRAY_TASK_ID]}"
 
-DATASET="reanalysis-era5-single-levels"
-ENS="False"
-PRODUCT_TYPE="reanalysis"
+# DATASET="reanalysis-era5-single-levels"
+# ENS="False"
+# PRODUCT_TYPE="reanalysis"
 
-TASKS=(
-  "lsm  land_sea_mask"
-  "tclw  total_column_cloud_liquid_water"
-  "tciw  total_column_cloud_ice_water"
-  "tcrw  total_column_rain_water"
-  "tcsw  total_column_snow_water"
-)
+# TASKS=(
+#   "lsm  land_sea_mask"
+#   "tclw  total_column_cloud_liquid_water"
+#   "tciw  total_column_cloud_ice_water"
+#   "tcrw  total_column_rain_water"
+#   "tcsw  total_column_snow_water"
+# )
 
-read -r VAR_SHORT VAR  <<< "${TASKS[$SLURM_ARRAY_TASK_ID]}"
+# read -r VAR_SHORT VAR  <<< "${TASKS[$SLURM_ARRAY_TASK_ID]}"
 
 
 if [ "$ENS" = "True" ]; then
@@ -80,7 +84,7 @@ else
 fi
 
 python ../pyscripts/get_data.py "${VAR}" "${DATASET}" "${PRODUCT_TYPE}" "${ENS}" \
-    "${VAR_SHORT}" "/scratch/schoelleh96/wp22a" # "${PLEV}"
+    "${VAR_SHORT}" "/scratch/schoelleh96/wp22a" "${PLEV}"
 # python ../pyscripts/splitter.py "/scratch/schoelleh96/wp22a/${BASEFOLDER}/${VAR}.nc" \
 #     "/scratch/schoelleh96/wp22a/${BASEFOLDER}/${VAR_SHORT}_chunks/" --chunks 11 241
 

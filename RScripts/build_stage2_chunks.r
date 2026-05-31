@@ -27,7 +27,7 @@ EADY_NC   <- get_arg("--eady-nc", Sys.getenv("EADY_NC",
 WIND_NC   <- get_arg("--wind-nc", Sys.getenv("WIND_NC",
                "/scratch/schoelleh96/wp22a/data/upper_wind_day_era5_all_years.nc"))
 RH_NC     <- get_arg("--rh-nc", Sys.getenv("RH_NC",
-               "/scratch/schoelleh96/wp22a/data/relative_humidity_700-850.nc"))
+               "/scratch/schoelleh96/wp22a/data/relative_humidity_500-850.nc"))
 HYDRO_NC  <- get_arg("--hydro-nc", Sys.getenv("HYDRO_NC",
                "/scratch/schoelleh96/wp22a/data/hydrosum.nc"))
 GRAD_NC  <- get_arg("--grad-nc", Sys.getenv("GRAD_NC",
@@ -83,6 +83,11 @@ to_posix_utc <- function(x) {
 }
 
 time_vals <- to_posix_utc(time_vals)
+start_cutoff <- as.POSIXct("1950-01-01 00:00:00", tz = "UTC")
+keep_time <- time_vals >= start_cutoff
+
+time_vals <- time_vals[keep_time]
+resid_arr <- resid_arr[, , keep_time, drop = FALSE]
 
 nlon <- length(lon_vals)
 nlat <- length(lat_vals)
@@ -394,22 +399,22 @@ resid_chunk <- if (!is.null(existing$residuals) && !OVERWRITE) {
   resid_arr[ix, iy, , drop = FALSE]
 }
 
-mcc_chunk <- read_or_keep_cube(existing %||% list(), "mcc", MCC_NC, MCC_VAR, chunk_lon, chunk_lat, time_vals)
-hcc_chunk <- read_or_keep_cube(existing %||% list(), "hcc", HCC_NC, HCC_VAR, chunk_lon, chunk_lat, time_vals)
-eady_chunk <- read_or_keep_cube(existing %||% list(), "eady", EADY_NC, EADY_VAR, chunk_lon, chunk_lat, time_vals)
-upper_wind_chunk <- read_or_keep_cube(existing %||% list(), "upper_wind", WIND_NC, WIND_VAR, chunk_lon, chunk_lat, time_vals)
+# mcc_chunk <- read_or_keep_cube(existing %||% list(), "mcc", MCC_NC, MCC_VAR, chunk_lon, chunk_lat, time_vals)
+# hcc_chunk <- read_or_keep_cube(existing %||% list(), "hcc", HCC_NC, HCC_VAR, chunk_lon, chunk_lat, time_vals)
+# eady_chunk <- read_or_keep_cube(existing %||% list(), "eady", EADY_NC, EADY_VAR, chunk_lon, chunk_lat, time_vals)
+# upper_wind_chunk <- read_or_keep_cube(existing %||% list(), "upper_wind", WIND_NC, WIND_VAR, chunk_lon, chunk_lat, time_vals)
 
 rh_chunk <- if (!is.null(RH_NC) && nzchar(RH_NC) && file.exists(RH_NC)) {
-  read_or_keep_cube(existing %||% list(), "rh_700_850", RH_NC, RH_VAR, chunk_lon, chunk_lat, time_vals)
+  read_or_keep_cube(existing %||% list(), "rh_500_850", RH_NC, RH_VAR, chunk_lon, chunk_lat, time_vals)
 } else {
-  existing$rh_700_850 %||% NULL
+  existing$rh_500_850 %||% NULL
 }
 
-hydro_chunk <- if (!is.null(HYDRO_NC) && nzchar(HYDRO_NC) && file.exists(HYDRO_NC)) {
-  read_or_keep_cube(existing %||% list(), "hydrosum", HYDRO_NC, HYDRO_VAR, chunk_lon, chunk_lat, time_vals)
-} else {
-  existing$hydrosum %||% NULL
-}
+# hydro_chunk <- if (!is.null(HYDRO_NC) && nzchar(HYDRO_NC) && file.exists(HYDRO_NC)) {
+#   read_or_keep_cube(existing %||% list(), "hydrosum", HYDRO_NC, HYDRO_VAR, chunk_lon, chunk_lat, time_vals)
+# } else {
+#   existing$hydrosum %||% NULL
+# }
 
 grad_chunk <- if (!is.null(GRAD_NC) && nzchar(GRAD_NC) && file.exists(GRAD_NC)) {
   read_or_keep_cube(existing %||% list(), "z_grad_mag", GRAD_NC, GRAD_VAR, 
@@ -428,44 +433,44 @@ nt <- length(time_vals)
 nx <- length(chunk_lon)
 ny <- length(chunk_lat)
 
-need_any_wcb <- OVERWRITE || any(vapply(
-  c("wcb_in_12utc", "wcb_asc_12utc", "wcb_out_12utc",
-    "wcb_in_lag12", "wcb_asc_lag12", "wcb_out_lag12",
-    "wcb_in_lag24", "wcb_asc_lag24", "wcb_out_lag24"),
-  function(v) is.null(existing[[v]]),
-  logical(1)
-))
+# need_any_wcb <- OVERWRITE || any(vapply(
+#   c("wcb_in_12utc", "wcb_asc_12utc", "wcb_out_12utc",
+#     "wcb_in_lag12", "wcb_asc_lag12", "wcb_out_lag12",
+#     "wcb_in_lag24", "wcb_asc_lag24", "wcb_out_lag24"),
+#   function(v) is.null(existing[[v]]),
+#   logical(1)
+# ))
 
-if (need_any_wcb) {
-  message("Preparing WCB file lookup...")
-  f0  <- vector("list", nt)
-  f12 <- vector("list", nt)
-  f24 <- vector("list", nt)
+# if (need_any_wcb) {
+#   message("Preparing WCB file lookup...")
+#   f0  <- vector("list", nt)
+#   f12 <- vector("list", nt)
+#   f24 <- vector("list", nt)
 
-  for (tt in seq_along(time_vals)) {
-    t0  <- time_vals[tt]
-    t12 <- t0 - 12 * 3600
-    t24 <- t0 - 24 * 3600
+#   for (tt in seq_along(time_vals)) {
+#     t0  <- time_vals[tt]
+#     t12 <- t0 - 12 * 3600
+#     t24 <- t0 - 24 * 3600
 
-    f0[[tt]]  <- find_wcb_file(WCB_ROOT, t0)
-    f12[[tt]] <- find_wcb_file(WCB_ROOT, t12)
-    f24[[tt]] <- find_wcb_file(WCB_ROOT, t24)
-  }
-} else {
-  f0 <- f12 <- f24 <- NULL
-}
+#     f0[[tt]]  <- find_wcb_file(WCB_ROOT, t0)
+#     f12[[tt]] <- find_wcb_file(WCB_ROOT, t12)
+#     f24[[tt]] <- find_wcb_file(WCB_ROOT, t24)
+#   }
+# } else {
+#   f0 <- f12 <- f24 <- NULL
+# }
 
-wcb_in_12utc  <- read_or_keep_wcb(existing %||% list(), "wcb_in_12utc",  f0,  "GT800",   chunk_lon, chunk_lat, nt)
-wcb_asc_12utc <- read_or_keep_wcb(existing %||% list(), "wcb_asc_12utc", f0,  "MIDTROP", chunk_lon, chunk_lat, nt)
-wcb_out_12utc <- read_or_keep_wcb(existing %||% list(), "wcb_out_12utc", f0,  "LT400",   chunk_lon, chunk_lat, nt)
+# wcb_in_12utc  <- read_or_keep_wcb(existing %||% list(), "wcb_in_12utc",  f0,  "GT800",   chunk_lon, chunk_lat, nt)
+# wcb_asc_12utc <- read_or_keep_wcb(existing %||% list(), "wcb_asc_12utc", f0,  "MIDTROP", chunk_lon, chunk_lat, nt)
+# wcb_out_12utc <- read_or_keep_wcb(existing %||% list(), "wcb_out_12utc", f0,  "LT400",   chunk_lon, chunk_lat, nt)
 
-wcb_in_lag12  <- read_or_keep_wcb(existing %||% list(), "wcb_in_lag12",  f12, "GT800",   chunk_lon, chunk_lat, nt)
-wcb_asc_lag12 <- read_or_keep_wcb(existing %||% list(), "wcb_asc_lag12", f12, "MIDTROP", chunk_lon, chunk_lat, nt)
-wcb_out_lag12 <- read_or_keep_wcb(existing %||% list(), "wcb_out_lag12", f12, "LT400",   chunk_lon, chunk_lat, nt)
+# wcb_in_lag12  <- read_or_keep_wcb(existing %||% list(), "wcb_in_lag12",  f12, "GT800",   chunk_lon, chunk_lat, nt)
+# wcb_asc_lag12 <- read_or_keep_wcb(existing %||% list(), "wcb_asc_lag12", f12, "MIDTROP", chunk_lon, chunk_lat, nt)
+# wcb_out_lag12 <- read_or_keep_wcb(existing %||% list(), "wcb_out_lag12", f12, "LT400",   chunk_lon, chunk_lat, nt)
 
-wcb_in_lag24  <- read_or_keep_wcb(existing %||% list(), "wcb_in_lag24",  f24, "GT800",   chunk_lon, chunk_lat, nt)
-wcb_asc_lag24 <- read_or_keep_wcb(existing %||% list(), "wcb_asc_lag24", f24, "MIDTROP", chunk_lon, chunk_lat, nt)
-wcb_out_lag24 <- read_or_keep_wcb(existing %||% list(), "wcb_out_lag24", f24, "LT400",   chunk_lon, chunk_lat, nt)
+# wcb_in_lag24  <- read_or_keep_wcb(existing %||% list(), "wcb_in_lag24",  f24, "GT800",   chunk_lon, chunk_lat, nt)
+# wcb_asc_lag24 <- read_or_keep_wcb(existing %||% list(), "wcb_asc_lag24", f24, "MIDTROP", chunk_lon, chunk_lat, nt)
+# wcb_out_lag24 <- read_or_keep_wcb(existing %||% list(), "wcb_out_lag24", f24, "LT400",   chunk_lon, chunk_lat, nt)
 
 out <- list(
   metadata = list(
@@ -483,23 +488,23 @@ out <- list(
   lat = chunk_lat,
   time = time_vals,
   residuals = resid_chunk,
-  mcc = mcc_chunk,
-  hcc = hcc_chunk,
-  eady = eady_chunk,
-  upper_wind = upper_wind_chunk,
-  wcb_in_12utc = wcb_in_12utc,
-  wcb_asc_12utc = wcb_asc_12utc,
-  wcb_out_12utc = wcb_out_12utc,
-  wcb_in_lag12 = wcb_in_lag12,
-  wcb_asc_lag12 = wcb_asc_lag12,
-  wcb_out_lag12 = wcb_out_lag12,
-  wcb_in_lag24 = wcb_in_lag24,
-  wcb_asc_lag24 = wcb_asc_lag24,
-  wcb_out_lag24 = wcb_out_lag24
+  # mcc = mcc_chunk,
+  # hcc = hcc_chunk,
+  # eady = eady_chunk,
+  # upper_wind = upper_wind_chunk
+  # wcb_in_12utc = wcb_in_12utc,
+  # wcb_asc_12utc = wcb_asc_12utc,
+  # wcb_out_12utc = wcb_out_12utc,
+  # wcb_in_lag12 = wcb_in_lag12,
+  # wcb_asc_lag12 = wcb_asc_lag12,
+  # wcb_out_lag12 = wcb_out_lag12,
+  # wcb_in_lag24 = wcb_in_lag24,
+  # wcb_asc_lag24 = wcb_asc_lag24,
+  # wcb_out_lag24 = wcb_out_lag24
 )
 
-if (!is.null(rh_chunk)) out$rh_700_850 <- rh_chunk
-if (!is.null(hydro_chunk)) out$hydrosum <- hydro_chunk
+if (!is.null(rh_chunk)) out$rh_500_850 <- rh_chunk
+# if (!is.null(hydro_chunk)) out$hydrosum <- hydro_chunk
 if (!is.null(grad_chunk)) out$grad <- grad_chunk
 if (!is.null(lap_chunk)) out$lap <- lap_chunk
 

@@ -10,8 +10,8 @@ sys.path.append(os.path.abspath(os.path.join('..', 'pyscripts')))
 
 # d_path = "/net/scratch/schoelleh96/WP2/WP2.2a/"
 
-lon_min, lon_max = -80, 40  # Longitude range
-lat_min, lat_max = 30, 90    # Latitude range
+lon_min, lon_max = -81, 41  # Longitude range
+lat_min, lat_max = 29, 90    # Latitude range
 year_min = 1940
 year_max = 2024
 
@@ -104,7 +104,7 @@ def main():
         pressure_level=plev
     )
     print(f"grib_file: {grib_file}")
-    du.convert_grib_to_nc(d_path_full, grib_file, cleanup=True)
+    du.convert_grib_to_nc(d_path_full, grib_file, cleanup=True, subset_half_degree=False)
     if args.ens.lower() == 'true':
         du.calc_ens_spread(d_path_full, var_name, args.variable_short_name)
 

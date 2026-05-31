@@ -1,39 +1,21 @@
 #!/usr/bin/env python3
 """
-Compute horizontal gradient magnitude and spherical Laplacian
-for a scalar field on a regular latitude-longitude grid.
+Compute horizontal gradient magnitude, spherical Laplacian,
+and absolute spherical Laplacian for a scalar field on a regular
+latitude-longitude grid.
 
-Designed for z500 / geopotential height on daily data, but can be used
-for any scalar variable on a regular lat-lon grid.
-
-Example:
-    python compute_z500_diagnostics.py \
-        --input z500_daily_1940_2024.nc \
-        --output z500_diagnostics.nc \
-        --var z500 \
-        --lat latitude \
-        --lon longitude \
-        --time time
-
-Notes
------
-- Assumes a regular lat-lon grid.
-- Uses spherical geometry:
-      d/dx = 1 / (R cos(phi)) * d/dlambda
-      d/dy = 1 / R * d/dphi
-- Computes the spherical Laplacian:
-      ∇²f = 1/(R² cosφ) ∂/∂φ (cosφ ∂f/∂φ) + 1/(R² cos²φ) ∂²f/∂λ²
-- Longitude is not treated as explicitly periodic here; interior points are
-  generally fine, but the seam can be slightly less accurate. If you want a
-  cyclic-longitude version later, that can be done too.
+FIXED VERSION:
+- Output grid is guaranteed to lie exactly on target spacing (e.g. 0.5°)
 """
 
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
+import dask.array as dsa
 import numpy as np
 import xarray as xr
 
@@ -41,235 +23,270 @@ import xarray as xr
 EARTH_RADIUS_M = 6_371_000.0
 GRAVITY = 9.80665
 
+DEFAULT_SOURCE_DEG = 0.25
+DEFAULT_TARGET_DEG = 0.5
+DEFAULT_RES_TOL_DEG = 0.02
+DEFAULT_MAX_TIME_CHUNK = 50
+DEFAULT_TARGET_MB_PER_WORKER = 256
 
+
+def log(msg: str) -> None:
+    print(f"[INFO] {msg}", flush=True)
+
+
+# =========================
+# ARGUMENTS
+# =========================
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Compute gradient magnitude and Laplacian on a regular lat-lon grid."
-    )
+    parser = argparse.ArgumentParser()
 
-    parser.add_argument("--input", required=True, help="Input NetCDF file")
-    parser.add_argument("--grad-output", required=True, help="Output NetCDF file for gradient magnitude")
-    parser.add_argument("--lap-output", required=True, help="Output NetCDF file for Laplacian")
-    parser.add_argument("--var", required=True, help="Variable name, e.g. z500 or z")
-    parser.add_argument("--lat", default="latitude", help="Latitude dimension/coord name")
-    parser.add_argument("--lon", default="longitude", help="Longitude dimension/coord name")
-    parser.add_argument("--time", default="time", help="Time dimension name")
-    parser.add_argument(
-        "--convert-geopotential-to-height",
-        action="store_true",
-        help="Convert geopotential (m^2 s^-2) to geopotential height (m) by dividing by g",
-    )
-    parser.add_argument(
-        "--chunks",
-        nargs="*",
-        default=None,
-        help=(
-            "Optional dask chunking as key=value pairs, e.g. "
-            "--chunks time=100 latitude=181 longitude=360"
-        ),
-    )
-    parser.add_argument(
-        "--engine",
-        default=None,
-        help="Optional xarray engine, e.g. netcdf4 or h5netcdf"
-    )
+    parser.add_argument("--input", required=True)
+    parser.add_argument("--grad-output", required=True)
+    parser.add_argument("--lap-output", required=True)
+    parser.add_argument("--abs-lap-output", required=True)
+    parser.add_argument("--var", required=True)
+
+    parser.add_argument("--lat", default="latitude")
+    parser.add_argument("--lon", default="longitude")
+    parser.add_argument("--time", default="time")
+
+    parser.add_argument("--convert-geopotential-to-height", action="store_true")
+
+    parser.add_argument("--engine", default=None)
+
+    parser.add_argument("--auto-coarsen-from-deg", type=float, default=DEFAULT_SOURCE_DEG)
+    parser.add_argument("--coarsen-to-deg", type=float, default=DEFAULT_TARGET_DEG)
+    parser.add_argument("--resolution-tol-deg", type=float, default=DEFAULT_RES_TOL_DEG)
+
+    parser.add_argument("--edge-order", type=int, default=2, choices=(1, 2))
+
+    parser.add_argument("--max-time-chunk", type=int, default=DEFAULT_MAX_TIME_CHUNK)
+    parser.add_argument("--target-mb-per-worker", type=int, default=DEFAULT_TARGET_MB_PER_WORKER)
 
     return parser.parse_args()
 
 
-def parse_chunks(chunk_args: list[str] | None) -> dict[str, int] | None:
-    if not chunk_args:
-        return None
-
-    chunks: dict[str, int] = {}
-    for item in chunk_args:
-        if "=" not in item:
-            raise ValueError(f"Invalid chunk specification: {item!r}. Use key=value.")
-        key, value = item.split("=", 1)
-        chunks[key] = int(value)
-    return chunks
-
-
-def validate_grid(da: xr.DataArray, lat_name: str, lon_name: str) -> None:
-    if lat_name not in da.coords:
-        raise ValueError(f"Latitude coordinate {lat_name!r} not found in data array.")
-    if lon_name not in da.coords:
-        raise ValueError(f"Longitude coordinate {lon_name!r} not found in data array.")
-
-    if da[lat_name].ndim != 1 or da[lon_name].ndim != 1:
-        raise ValueError("This script only supports 1D latitude and longitude coordinates.")
-
-    lat_vals = da[lat_name].values
-    lon_vals = da[lon_name].values
-
-    if lat_vals.size < 3 or lon_vals.size < 3:
-        raise ValueError("Latitude and longitude must each have at least 3 points.")
-
-    dlat = np.diff(lat_vals)
-    dlon = np.diff(lon_vals)
-
-    if not np.allclose(dlat, dlat[0], rtol=0, atol=1e-8):
-        raise ValueError("Latitude grid is not regular.")
-    if not np.allclose(dlon, dlon[0], rtol=0, atol=1e-8):
-        raise ValueError("Longitude grid is not regular.")
+# =========================
+# GRID HELPERS
+# =========================
+def _regular_spacing_deg(coord: xr.DataArray) -> float:
+    vals = np.asarray(coord.values, dtype=np.float64)
+    diffs = np.abs(np.diff(vals))
+    spacing = float(np.median(diffs))
+    if not np.allclose(diffs, spacing, atol=1e-8):
+        raise ValueError("Coordinate not regular")
+    return spacing
 
 
-def compute_diagnostics(
-    da: xr.DataArray,
-    lat_name: str,
-    lon_name: str,
-    radius: float = EARTH_RADIUS_M,
-) -> xr.Dataset:
+def detect_grid_spacing_deg(da: xr.DataArray, lat: str, lon: str):
+    return _regular_spacing_deg(da[lat]), _regular_spacing_deg(da[lon])
+
+
+def regular_target_coord_1d(source_vals, target_deg, n_out):
     """
-    Compute first derivatives, gradient magnitude, and spherical Laplacian.
+    Construct EXACT regular grid (no inherited offsets).
     """
-    da = da.astype(np.float64)
+    source_vals = np.asarray(source_vals, dtype=np.float64)
 
-    validate_grid(da, lat_name, lon_name)
+    ascending = source_vals[-1] > source_vals[0]
+    start = np.round(source_vals[0] / target_deg) * target_deg
 
-    original_units = da.attrs.get("units", "")
+    if ascending:
+        out = start + target_deg * np.arange(n_out)
+    else:
+        out = start - target_deg * np.arange(n_out)
 
-    # Convert coordinates to radians for differentiation.
-    lat_rad = np.deg2rad(da[lat_name])
-    lon_rad = np.deg2rad(da[lon_name])
+    return np.round(out, 10)
 
-    f = da.assign_coords({
-        lat_name: lat_rad,
-        lon_name: lon_rad,
-    })
 
-    coslat = np.cos(f[lat_name])
-    eps = 1e-12
-    coslat_safe = xr.where(np.abs(coslat) < eps, np.nan, coslat)
+# =========================
+# COARSENING
+# =========================
+def cosine_weighted_coarsen_numpy(field, lat_vals, lon_vals, target_deg):
+    nt, ny, nx = field.shape
 
-    # First derivatives in spherical coordinates
-    dfdphi = f.differentiate(coord=lat_name)       # ∂f/∂φ
-    dfdlambda = f.differentiate(coord=lon_name)    # ∂f/∂λ
+    ny2 = ny // 2
+    nx2 = nx // 2
 
-    # Convert to physical eastward/northward derivatives
-    dfdx = dfdlambda / (radius * coslat_safe)
+    field = field[:, : ny2 * 2, : nx2 * 2]
+    lat_vals = lat_vals[: ny2 * 2]
+    lon_vals = lon_vals[: nx2 * 2]
+
+    block = field.reshape(nt, ny2, 2, nx2, 2)
+
+    lat_w = np.cos(np.deg2rad(lat_vals)).reshape(ny2, 2)
+
+    lon_mean = block.mean(axis=-1)
+    numerator = (lon_mean * lat_w[None, :, :, None]).sum(axis=2)
+    denominator = lat_w.sum(axis=1)[None, :, None]
+
+    out = numerator / denominator
+
+    lat_out = regular_target_coord_1d(lat_vals, target_deg, ny2)
+    lon_out = regular_target_coord_1d(lon_vals, target_deg, nx2)
+
+    return out, lat_out, lon_out
+
+
+# =========================
+# CORE COMPUTATION
+# =========================
+def compute_block_diagnostics(
+    block,
+    lat_name,
+    lon_name,
+    time_name,
+    source_deg,
+    target_deg,
+    tol_deg,
+    radius,
+    edge_order,
+):
+    field = np.asarray(block.data, dtype=np.float64)
+
+    lat_vals = np.asarray(block[lat_name].values)
+    lon_vals = np.asarray(block[lon_name].values)
+
+    lat_step, lon_step = detect_grid_spacing_deg(block, lat_name, lon_name)
+
+    if abs(lat_step - source_deg) <= tol_deg:
+        field, lat_vals, lon_vals = cosine_weighted_coarsen_numpy(
+            field, lat_vals, lon_vals, target_deg
+        )
+    elif abs(lat_step - target_deg) <= tol_deg:
+        lat_vals = regular_target_coord_1d(lat_vals, target_deg, len(lat_vals))
+        lon_vals = regular_target_coord_1d(lon_vals, target_deg, len(lon_vals))
+    else:
+        raise ValueError("Unsupported grid resolution")
+
+    lat_rad = np.deg2rad(lat_vals)
+    lon_rad = np.deg2rad(lon_vals)
+
+    coslat = np.cos(lat_rad)[None, :, None]
+
+    dfdphi = np.gradient(field, lat_rad, axis=1, edge_order=edge_order)
+    dfdlambda = np.gradient(field, lon_rad, axis=2, edge_order=edge_order)
+
+    dfdx = dfdlambda / (radius * coslat)
     dfdy = dfdphi / radius
 
-    grad_mag = np.hypot(dfdx, dfdy)
+    grad = np.hypot(dfdx, dfdy)
 
-    # Spherical Laplacian
-    term_phi = (coslat * dfdphi).differentiate(coord=lat_name) / (radius**2 * coslat_safe)
-    d2fdlambda2 = dfdlambda.differentiate(coord=lon_name)
-    term_lambda = d2fdlambda2 / (radius**2 * coslat_safe**2)
-    laplacian = term_phi + term_lambda
+    term_phi = np.gradient(coslat * dfdphi, lat_rad, axis=1) / (radius**2 * coslat)
+    term_lambda = np.gradient(dfdlambda, lon_rad, axis=2) / (radius**2 * coslat**2)
 
-    var_name = da.name if da.name is not None else "field"
+    lap = term_phi + term_lambda
+    abs_lap = np.abs(lap)
 
-    dfdx = dfdx.rename(f"{var_name}_dx")
-    dfdy = dfdy.rename(f"{var_name}_dy")
-    grad_mag = grad_mag.rename(f"{var_name}_grad_mag")
-    laplacian = laplacian.rename(f"{var_name}_laplacian")
-    abs_laplacian = np.abs(laplacian).rename(f"{var_name}_abs_laplacian")
+    coords = {
+        time_name: block[time_name],
+        lat_name: lat_vals,
+        lon_name: lon_vals,
+    }
 
-    dfdx.attrs.update({
-        "long_name": f"Eastward derivative of {var_name}",
-        "units": f"{original_units} m^-1".strip(),
-    })
-    dfdy.attrs.update({
-        "long_name": f"Northward derivative of {var_name}",
-        "units": f"{original_units} m^-1".strip(),
-    })
-    grad_mag.attrs.update({
-        "long_name": f"Horizontal gradient magnitude of {var_name}",
-        "units": f"{original_units} m^-1".strip(),
-    })
-    laplacian.attrs.update({
-        "long_name": f"Spherical Laplacian of {var_name}",
-        "units": f"{original_units} m^-2".strip(),
-    })
-    abs_laplacian.attrs.update({
-        "long_name": f"Absolute spherical Laplacian of {var_name}",
-        "units": f"{original_units} m^-2".strip(),
-    })
-
-    out = xr.Dataset(
-        data_vars={
-            grad_mag.name: grad_mag,
-            laplacian.name: laplacian,
-        }
+    return xr.Dataset(
+        {
+            f"{block.name}_grad_mag": ((time_name, lat_name, lon_name), grad),
+            f"{block.name}_laplacian": ((time_name, lat_name, lon_name), lap),
+            f"{block.name}_abs_laplacian": ((time_name, lat_name, lon_name), abs_lap),
+        },
+        coords=coords,
     )
 
-    # Restore original degree coordinates
-    out = out.assign_coords({
-        lat_name: da[lat_name],
-        lon_name: da[lon_name],
-    })
 
-    out.attrs["description"] = (
-        "Diagnostics computed on a regular lat-lon grid using spherical geometry"
+# =========================
+# TEMPLATE
+# =========================
+def build_template(da, lat, lon, time, source_deg, target_deg, tol_deg):
+    lat_step, lon_step = detect_grid_spacing_deg(da, lat, lon)
+
+    if abs(lat_step - source_deg) <= tol_deg:
+        nlat = da.sizes[lat] // 2
+        nlon = da.sizes[lon] // 2
+    else:
+        nlat = da.sizes[lat]
+        nlon = da.sizes[lon]
+
+    lat_out = regular_target_coord_1d(da[lat].values, target_deg, nlat)
+    lon_out = regular_target_coord_1d(da[lon].values, target_deg, nlon)
+
+    # ✅ CRITICAL: use SAME chunking as input
+    time_chunks = da.chunksizes[time]
+
+    chunks = (time_chunks, nlat, nlon)
+    shape = (da.sizes[time], nlat, nlon)
+
+    grad_name = f"{da.name}_grad_mag"
+    lap_name = f"{da.name}_laplacian"
+    abs_lap_name = f"{da.name}_abs_laplacian"
+
+    template = xr.Dataset(
+        {
+            grad_name: (
+                (time, lat, lon),
+                dsa.empty(shape, chunks=chunks, dtype=np.float64),
+            ),
+            lap_name: (
+                (time, lat, lon),
+                dsa.empty(shape, chunks=chunks, dtype=np.float64),
+            ),
+            abs_lap_name: (
+                (time, lat, lon),
+                dsa.empty(shape, chunks=chunks, dtype=np.float64),
+            ),
+        },
+        coords={
+            time: da[time],
+            lat: xr.DataArray(lat_out, dims=(lat,)),
+            lon: xr.DataArray(lon_out, dims=(lon,)),
+        },
     )
-    out.attrs["earth_radius_m"] = radius
 
-    return out
+    return template
 
 
-def main() -> int:
+# =========================
+# MAIN
+# =========================
+def main():
     args = parse_args()
 
-    input_path = Path(args.input)
-    grad_output_path = Path(args.grad_output)
-    lap_output_path = Path(args.lap_output)
-    if not input_path.exists():
-        raise FileNotFoundError(f"Input file not found: {input_path}")
-
-    chunks = parse_chunks(args.chunks)
-
-    open_kwargs = {}
-    if args.engine is not None:
-        open_kwargs["engine"] = args.engine
-    if chunks is not None:
-        open_kwargs["chunks"] = chunks
-
-    print(f"Opening {input_path}")
-    ds = xr.open_dataset(input_path, **open_kwargs)
-
-    if args.var not in ds:
-        raise KeyError(f"Variable {args.var!r} not found in dataset. Variables: {list(ds.data_vars)}")
+    ds = xr.open_dataset(args.input, chunks={args.time: 1})
 
     da = ds[args.var]
 
     if args.convert_geopotential_to_height:
-        print("Converting geopotential to geopotential height by dividing by g.")
         da = da / GRAVITY
-        da.attrs = dict(da.attrs)
-        da.attrs["units"] = "m"
-        if "long_name" in da.attrs:
-            da.attrs["long_name"] = f"{da.attrs['long_name']} converted to geopotential height"
 
-    print("Computing diagnostics...")
-    out = compute_diagnostics(
-        da=da,
-        lat_name=args.lat,
-        lon_name=args.lon,
-        radius=EARTH_RADIUS_M,
+    da = da.chunk({args.time: -1, args.lat: -1, args.lon: -1})
+
+    template = build_template(
+        da,
+        args.lat,
+        args.lon,
+        args.time,
+        args.auto_coarsen_from_deg,
+        args.coarsen_to_deg,
+        args.resolution_tol_deg,
     )
 
-    # Compression settings for NetCDF output
-    encoding = {}
-    for var in out.data_vars:
-        encoding[var] = {
-            "zlib": True,
-            "complevel": 4,
-            "shuffle": True,
-        }
+    out = xr.map_blocks(
+        compute_block_diagnostics,
+        da,
+        kwargs=dict(
+            lat_name=args.lat,
+            lon_name=args.lon,
+            time_name=args.time,
+            source_deg=args.auto_coarsen_from_deg,
+            target_deg=args.coarsen_to_deg,
+            tol_deg=args.resolution_tol_deg,
+            radius=EARTH_RADIUS_M,
+            edge_order=args.edge_order,
+        ),
+        template=template,
+    )
 
-    grad_var = f"{da.name if da.name is not None else 'field'}_grad_mag"
-    lap_var = f"{da.name if da.name is not None else 'field'}_laplacian"
-
-    print(f"Writing {grad_output_path}")
-    out[[grad_var]].to_netcdf(grad_output_path, encoding={grad_var: encoding[grad_var]})
-
-    print(f"Writing {lap_output_path}")
-    out[[lap_var]].to_netcdf(lap_output_path, encoding={lap_var: encoding[lap_var]})
-
-    print("Done.")
-
-    return 0
+    out.to_netcdf(args.grad_output)
 
 
 if __name__ == "__main__":

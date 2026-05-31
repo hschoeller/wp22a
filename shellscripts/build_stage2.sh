@@ -2,10 +2,10 @@
 #SBATCH --job-name=build_stage2
 #SBATCH --output=logs/build_stage2_%a.out
 #SBATCH --error=logs/build_stage2_%a.err
-#SBATCH --array=1513
+# SBATCH --array=1-2651%300
 #SBATCH --time=14-00:00:00
-#SBATCH --mem=9G
-#SBATCH --cpus-per-task=1
+#SBATCH --mem=250G
+#SBATCH --cpus-per-task=16
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --partition=agpfahl
@@ -31,7 +31,7 @@ WCB_ROOT="/scratch/schoelleh96/wp22a/ELIAS_data"
 EADY_NC="/scratch/schoelleh96/wp22a/data/eady.nc"
 WIND_NC="/scratch/schoelleh96/wp22a/data/wind.nc"
 HYDRO_NC="/scratch/schoelleh96/wp22a/data/hydrosum.nc"
-RH_NC="/scratch/schoelleh96/wp22a/data/relative_humidity_700-850.nc"
+RH_NC="/scratch/schoelleh96/wp22a/data/relative_humidity_500-850.nc"
 GRAD_NC=/scratch/schoelleh96/wp22a/data/z500_grad_mag.nc
 LAP_NC=/scratch/schoelleh96/wp22a/data/z500_laplacian.nc
 
@@ -44,18 +44,14 @@ RH_VAR="r"
 GRAD_VAR="z_grad_mag"
 LAP_VAR="z_laplacian"
 
-R_SCRIPT="/home/schoelleh96/wp22a/RScripts/build_stage2_chunks.r"
-OUT_DIR="/scratch/schoelleh96/wp22a/stage2_chunks"
+R_SCRIPT="/home/schoelleh96/wp22a/RScripts/build_chunks_small.r"
+OUT_DIR="/scratch/schoelleh96/wp22a/stage2_chunks_small"
 
 LAT_CHUNKS=11
 LON_CHUNKS=241
-OVERWRITE=0
-
-mkdir -p "${OUT_DIR}"
-mkdir -p "${OUT_DIR}/logs"
+OVERWRITE=1
 
 Rscript "${R_SCRIPT}" \
-  --task-id="${SLURM_ARRAY_TASK_ID}" \
   --chunks="${LAT_CHUNKS},${LON_CHUNKS}" \
   --response-rds="${RESP_RDS}" \
   --mcc-nc="${MCC_NC}" \
@@ -67,7 +63,7 @@ Rscript "${R_SCRIPT}" \
   --eady-var="${EADY_VAR}" \
   --wind-var="${WIND_VAR}" \
   --rh-nc="${RH_NC}" \
-  --hydo_nc="${HYDRO_NC}" \
+  --hydro_nc="${HYDRO_NC}" \
   --rh_var="${RH_VAR}" \
   --hydro_var="${HYDRO_VAR}" \
   --grad-nc="${GRAD_NC}" \
@@ -77,3 +73,37 @@ Rscript "${R_SCRIPT}" \
   --wcb-root="${WCB_ROOT}" \
   --out-dir="${OUT_DIR}" \
   --overwrite="${OVERWRITE}"
+
+# mkdir -p "${OUT_DIR}"
+# mkdir -p "${OUT_DIR}/logs"
+
+# Rscript "${R_SCRIPT}" \
+#   --task-id="${SLURM_ARRAY_TASK_ID}" \
+#   --chunks="${LAT_CHUNKS},${LON_CHUNKS}" \
+#   --response-rds="${RESP_RDS}" \
+#   --mcc-nc="${MCC_NC}" \
+#   --hcc-nc="${HCC_NC}" \
+#   --mcc-var="${MCC_VAR}" \
+#   --hcc-var="${HCC_VAR}" \
+#   --eady-nc="${EADY_NC}" \
+#   --wind-nc="${WIND_NC}" \
+#   --eady-var="${EADY_VAR}" \
+#   --wind-var="${WIND_VAR}" \
+#   --rh-nc="${RH_NC}" \
+#   --hydro_nc="${HYDRO_NC}" \
+#   --rh_var="${RH_VAR}" \
+#   --hydro_var="${HYDRO_VAR}" \
+#   --grad-nc="${GRAD_NC}" \
+#   --lap_nc="${LAP_NC}" \
+#   --grad_var="${GRAD_VAR}" \
+#   --lap_var="${LAP_VAR}" \
+#   --wcb-root="${WCB_ROOT}" \
+#   --out-dir="${OUT_DIR}" \
+#   --overwrite="${OVERWRITE}"
+
+
+# Rscript /home/schoelleh96/wp22a/RScripts/build_wcb_chunks.r \
+#   --task-id="${SLURM_ARRAY_TASK_ID}" \
+#   --in-dir="/scratch/schoelleh96/wp22a/stage2_chunks_res/" \
+#   --out-dir="/scratch/schoelleh96/wp22a/stage2_chunks_wcb/" \
+#   --wcb-root="/scratch/schoelleh96/wp22a/ELIAS_data/"

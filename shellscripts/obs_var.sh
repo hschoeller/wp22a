@@ -3,7 +3,7 @@
 #SBATCH --job-name=ObsVar
 #SBATCH --output=./logs/ObsVar_%a.out
 #SBATCH --error=./logs/ObsVar_%a.err
-#SBATCH --array=1420
+#SBATCH --array=1331
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
 #SBATCH --partition=agpfahl
@@ -30,7 +30,7 @@ conda activate wp22aR
 #     sleep 60
 # done &
 
-SEASON=("False") # ("False" "True")
+SEASON=("True") # ("False" "True")
 WR=("True") #  "False")
 
 for SEAS in "${SEASON[@]}"; do
